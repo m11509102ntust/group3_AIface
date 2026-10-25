@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from app import app, bmi_guidance, _face_detect_rate_lock, _face_detect_requests
+from app import app, _face_detect_rate_lock, _face_detect_requests
 
 
 class FaceSenseAppTests(unittest.TestCase):
@@ -24,53 +24,9 @@ class FaceSenseAppTests(unittest.TestCase):
         self.assertIn("示意辨識紀錄", page)
         self.assertIn("不辨識身份或記錄打卡", page)
 
-    def test_post_route_still_renders_dashboard(self):
-        response = self.client.post("/", data={"height": "170", "weight": "65"})
-        self.assertEqual(response.status_code, 200)
-        page = response.get_data(as_text=True)
-        self.assertIn("FaceSense", page)
-        self.assertIn("展示模式", page)
-
-    def test_taiwan_adult_thresholds_are_preserved(self):
-        for bmi, category in [
-            (18.4, "體重過輕"),
-            (18.5, "健康體位"),
-            (23.9, "健康體位"),
-            (24.0, "體重過重"),
-            (26.9, "體重過重"),
-            (27.0, "肥胖"),
-        ]:
-            with self.subTest(bmi=bmi):
-                self.assertEqual(bmi_guidance(bmi)["label"], category)
-
-    def test_invalid_post_data_does_not_break_dashboard(self):
-        for height, weight in [
-            ("", "65"),
-            ("0", "65"),
-            ("abc", "65"),
-            ("170", "-2"),
-            ("inf", "65"),
-            ("170", "nan"),
-        ]:
-            with self.subTest(height=height, weight=weight):
-                response = self.client.post(
-                    "/",
-                    data={"height": height, "weight": weight},
-                )
-                page = response.get_data(as_text=True)
-                self.assertEqual(response.status_code, 200)
-                self.assertIn("FaceSense", page)
-                self.assertNotIn("YOUR RESULT", page)
-
-    def test_input_is_not_reflected_into_dashboard(self):
-        response = self.client.post(
-            "/",
-            data={"height": "<script>alert(1)</script>", "weight": "65"},
-        )
-        page = response.get_data(as_text=True)
-        self.assertEqual(response.status_code, 200)
-        self.assertNotIn("<script>", page)
-        self.assertIn("AI 人臉偵測系統", page)
+    def test_root_route_rejects_post_requests(self):
+        response = self.client.post("/", data={"unused": "data"})
+        self.assertEqual(response.status_code, 405)
 
     def test_face_detection_requires_server_side_api_key(self):
         with patch.dict(os.environ, {}, clear=True):
