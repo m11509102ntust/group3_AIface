@@ -18,7 +18,7 @@
         <nav class="main-nav" aria-label="主要導覽">
           <a class="nav-item active" href="#dashboard"><span class="nav-icon">⌂</span>總覽</a>
           <a class="nav-item" href="#recognition"><span class="nav-icon">◎</span>人臉辨識</a>
-          <a class="nav-item" href="#records"><span class="nav-icon">▤</span>辨識紀錄</a>
+          <a class="nav-item" href="#checkin"><span class="nav-icon">▤</span>打卡紀錄</a>
           <a class="nav-item" href="#members"><span class="nav-icon">♙</span>人員管理</a>
         </nav>
 
@@ -36,7 +36,7 @@
           </div>
           <div class="topbar-actions">
             <button class="icon-button" type="button" aria-label="通知">♧<i></i></button>
-            <div class="profile"><span class="avatar">A</span><span><strong>Admin User</strong><small>系統管理員</small></span><b>⌄</b></div>
+            <div class="profile"><span class="avatar">A</span><span><strong>管理員</strong><small>{{ "已登入" if checkin_authenticated else "尚未登入" }}</small></span></div>
           </div>
         </header>
 
@@ -62,6 +62,55 @@
           <article class="stat-card"><div class="stat-heading"><span>示意待確認事件</span><span class="stat-icon orange">!</span></div><strong>03</strong><small class="trend warning">示意管理員事件</small><a href="#records" class="review-link">查看事件 →</a></article>
         </section>
 
+        <section class="checkin-grid" id="checkin">
+          <article class="panel">
+            <div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>人員打卡</h2></div></div>
+            {% if not checkin_configured %}
+              <p class="notice error-notice">打卡登入尚未設定。請管理員在伺服器環境變數設定 CHECKIN_ADMIN_PASSWORD 和 FLASK_SECRET_KEY。</p>
+            {% elif not checkin_authenticated %}
+              <p class="form-description">請先登入管理員帳號，才能管理人員及登記打卡。</p>
+              {% if login_error %}<p class="notice error-notice" role="alert">{{ login_error }}</p>{% endif %}
+              <form class="checkin-form login-form" action="{{ url_for('login') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label for="admin-password">管理員密碼</label>
+                <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+                <button class="camera-button primary-camera-button" type="submit">登入</button>
+              </form>
+            {% else %}
+              <form class="checkin-form" id="checkin-form" data-csrf-token="{{ csrf_token }}">
+                <label for="checkin-name">姓名</label>
+                <div class="checkin-controls">
+                  <input id="checkin-name" name="name" type="text" list="registered-people" maxlength="80" autocomplete="off" placeholder="輸入或選擇姓名" required>
+                  <datalist id="registered-people">
+                    {% for person in people %}<option value="{{ person }}">{% endfor %}
+                  </datalist>
+                  <button class="camera-button primary-camera-button" type="submit">記錄打卡</button>
+                </div>
+              </form>
+              <p class="checkin-status" id="checkin-status" role="status" aria-live="polite">未登記的姓名會先詢問是否新增。</p>
+            {% endif %}
+            {% if database_error %}<p class="notice error-notice" role="alert">{{ database_error }}</p>{% endif %}
+          </article>
+
+          {% if checkin_authenticated %}
+            <article class="panel" id="members">
+              <div class="panel-header"><div><span class="section-label">REGISTERED PEOPLE</span><h2>已登記人員</h2></div><span class="member-count">{{ people|length }} 人</span></div>
+              {% if people %}
+                <ul class="member-list" id="member-list">
+                  {% for person in people %}<li>{{ person }}</li>{% endfor %}
+                </ul>
+              {% else %}
+                <p class="empty-state" id="member-empty">尚無人員資料。首次輸入姓名並確認後會自動新增。</p>
+                <ul class="member-list" id="member-list" hidden></ul>
+              {% endif %}
+              <form class="logout-form" action="{{ url_for('logout') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button class="camera-button" type="submit">登出</button>
+              </form>
+            </article>
+          {% endif %}
+        </section>
+
         <section class="content-grid">
           <article class="panel recognition-panel" id="recognition">
             <div class="panel-header"><div><span class="section-label">LIVE FACE DETECTION</span><h2>即時人臉偵測</h2></div><span class="live-pill"><i></i> CAMERA</span></div>
@@ -82,20 +131,31 @@
           </article>
 
           <article class="panel activity-panel" id="records">
-            <div class="panel-header"><div><span class="section-label">DEMO ACTIVITY</span><h2>示意辨識紀錄</h2></div><a class="text-link" href="#records">查看全部 →</a></div>
-            <p class="demo-note">下列為介面示意資料，與即時人臉偵測結果無關。</p>
-            <div class="activity-list">
-              <div class="activity-row"><span class="person-avatar green-avatar">L</span><span class="activity-info"><strong>林冠宇</strong><small>正面辨識 · 大廳入口</small></span><span class="match high-match">99.8%<small>14:31:52</small></span></div>
-              <div class="activity-row"><span class="person-avatar purple-avatar">W</span><span class="activity-info"><strong>王小美</strong><small>正面辨識 · 會議室 A</small></span><span class="match high-match">98.4%<small>14:30:16</small></span></div>
-              <div class="activity-row"><span class="person-avatar orange-avatar">?</span><span class="activity-info"><strong>未識別人員</strong><small>需要進一步確認</small></span><span class="match low-match">82.1%<small>14:28:43</small></span></div>
-              <div class="activity-row"><span class="person-avatar blue-avatar">C</span><span class="activity-info"><strong>陳志明</strong><small>正面辨識 · 側門入口</small></span><span class="match high-match">97.6%<small>14:25:09</small></span></div>
-            </div>
+            <div class="panel-header"><div><span class="section-label">RECENT CHECK-INS</span><h2>最近打卡紀錄</h2></div></div>
+            {% if not checkin_authenticated %}
+              <p class="empty-state">登入後即可查看已儲存的打卡紀錄。</p>
+            {% elif checkins %}
+              <div class="table-scroll">
+                <table class="checkin-table">
+                  <thead><tr><th>姓名</th><th>打卡時間（本地時區）</th></tr></thead>
+                  <tbody id="checkin-records">
+                    {% for checkin in checkins %}
+                      <tr><td>{{ checkin.name }}</td><td><time data-utc-time="{{ checkin.checkin_time }}">{{ checkin.checkin_time }}</time></td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <p class="empty-state">目前沒有打卡紀錄。</p>
+              <div class="table-scroll"><table class="checkin-table"><thead><tr><th>姓名</th><th>打卡時間（本地時區）</th></tr></thead><tbody id="checkin-records"></tbody></table></div>
+            {% endif %}
           </article>
         </section>
 
-        <footer><span>© 2024 FaceSense AI</span><span>AI POWERED SECURITY PLATFORM <b>● 系統正常</b></span></footer>
+        <footer><span>© 2024 FaceSense AI</span><span>人臉偵測不會辨識姓名；打卡須登入管理員帳號。</span></footer>
       </main>
     </div>
     <script src="{{ url_for('static', filename='face-detect.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='checkin.js') }}" defer></script>
   </body>
 </html>
