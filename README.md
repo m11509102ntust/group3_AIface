@@ -1,8 +1,10 @@
-# FaceSense AI 人臉辨識系統
+# FaceSense AI 人臉偵測系統
 
-使用 Flask 製作的 AI 人臉辨識系統展示介面。目前為純 UI 假頁面，提供控制台、即時辨識畫面、辨識統計與最近辨識紀錄等視覺化內容；不會啟用攝影機，也不會進行實際的人臉辨識。
+使用 Flask 製作的 AI 人臉偵測展示介面。控制台統計與最近活動仍是示意資料；即時人臉偵測可啟用瀏覽器攝影機，將單張 JPEG 影像送至 Face Detection API。
 
-目前保留原有 Flask 路由與 BMI 後端程式，僅作為既有架構相容性保留，前端不使用其計算結果。
+即時功能只偵測臉部位置，不會辨識姓名、建立人員資料或記錄打卡。影像不會由此 Flask 應用程式保存。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
+
+偵測回應目前以 JSON 原文顯示；供應商的 OpenAPI 文件沒有描述回應欄位結構，因此尚未繪製臉部框。後端另設每個來源 IP 每分鐘 10 次的程序內限流；此限制會在程序重啟時重設，多個應用程式執行個體不會共用計數。
 
 ## 啟動
 
@@ -18,6 +20,19 @@ python app.py
 接著開啟 http://127.0.0.1:5000/ 。若 PowerShell 不允許啟用虛擬環境，也可以使用 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` 和 `.\.venv\Scripts\python.exe app.py`。
 
 執行測試：`python -m unittest discover -s tests`
+
+## 人臉偵測設定
+
+設定伺服器環境變數 `FACE_DETECT_API_KEY`，Flask 後端會以 `x-api-key` 標頭呼叫 `https://api-face-detect.knowlez.com/v1/face/detect`。金鑰不會送到瀏覽器或存入儲存庫。
+
+本機測試可在目前 PowerShell 工作階段設定：
+
+```powershell
+$env:FACE_DETECT_API_KEY = "由服務供應商簽發的有效金鑰"
+python app.py
+```
+
+部署到 Azure 前，請在 Azure Portal 的 Web App → **Settings → Environment variables** 加入 `FACE_DETECT_API_KEY`，儲存後確認應用程式已重新啟動。任何曾貼到聊天、提交到 Git 或其他不受信任位置的金鑰都應先撤銷，再使用新金鑰。
 
 ## 部署到 Azure Web App
 
