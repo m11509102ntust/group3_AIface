@@ -1,4 +1,4 @@
-name: Deploy BMI to Azure
+name: Deploy FaceSense to Azure
 
 on:
   push:
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: azure-bmi-production
+  group: azure-facesense-production
   cancel-in-progress: false
 
 jobs:
