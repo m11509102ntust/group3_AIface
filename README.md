@@ -1,10 +1,8 @@
-#正式站
-https://ntustwebtest18.azurewebsites.net/
 # FaceSense AI 人臉偵測系統
 
-使用 Flask 製作的 AI 人臉偵測展示介面。控制台統計與最近活動仍是示意資料；即時人臉偵測可啟用瀏覽器攝影機，將單張 JPEG 影像送至 Face Detection API。
+使用 Flask 製作的 AI 人臉偵測及打卡系統。控制台統計仍是示意資料；打卡紀錄、人員名冊會儲存在 SQLite 資料庫。即時人臉偵測可啟用瀏覽器攝影機，將單張 JPEG 影像送至 Face Detection API。
 
-即時功能只偵測臉部位置，不會辨識姓名、建立人員資料或記錄打卡。影像不會由此 Flask 應用程式保存。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
+即時功能只偵測臉部位置，不會辨識姓名或自動打卡。打卡由已登入的管理員輸入姓名；新姓名需確認後才會建立人員資料並記錄該次打卡。系統使用單一共用管理員密碼，並非個別員工帳號，不能單獨驗證每位打卡者身分。影像不會由此 Flask 應用程式保存。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
 
 偵測回應目前以 JSON 原文顯示；供應商的 OpenAPI 文件沒有描述回應欄位結構，因此尚未繪製臉部框。後端另設每個來源 IP 每分鐘 10 次的程序內限流；此限制會在程序重啟時重設，多個應用程式執行個體不會共用計數。
 
@@ -22,6 +20,32 @@ python app.py
 接著開啟 http://127.0.0.1:5000/ 。若 PowerShell 不允許啟用虛擬環境，也可以使用 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` 和 `.\.venv\Scripts\python.exe app.py`。
 
 執行測試：`python -m unittest discover -s tests`
+
+## 打卡登入與 SQLite
+
+打卡頁面需要管理員登入。設定以下伺服器環境變數後，重新啟動應用程式：
+
+- `CHECKIN_ADMIN_PASSWORD`：設定強且獨有的管理員密碼。此版本使用單一共用管理員密碼，任何取得密碼的人都能新增人員與打卡。
+- `FLASK_SECRET_KEY`：Flask 簽署登入 session 的隨機秘密；請使用高熵值，勿重複使用 API key 或提交至 Git。
+- `CHECKIN_DB_PATH`（選用）：SQLite 檔案的完整路徑。未設定時，本機使用 Flask `instance` 資料夾；Azure Windows App Service 使用 `D:\home\data\checkins.sqlite3`。
+
+可使用 Python 產生秘密值（請在自己的終端機執行，不要將輸出貼到聊天或提交到儲存庫）：
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+本機 PowerShell 設定範例：
+
+```powershell
+$env:CHECKIN_ADMIN_PASSWORD = "自行設定的管理員密碼"
+$env:FLASK_SECRET_KEY = "自行產生的隨機秘密"
+python app.py
+```
+
+資料庫會建立 `people` 人員名冊，以及 `mytable` 打卡資料表（包含 `姓名`、`打卡時間` 欄位）。姓名未登記時，頁面先詢問確認；確認後會以一筆資料庫交易新增人員並記錄本次打卡。時間以 UTC ISO-8601 格式儲存，頁面依瀏覽器時區顯示。Azure 預設路徑位於持久化的 `D:\home`，不要將資料庫指定到部署目錄；若覆寫 `CHECKIN_DB_PATH`，仍須選用 Azure 持久資料目錄並自行安排備份。
+
+Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHECKIN_ADMIN_PASSWORD`、`FLASK_SECRET_KEY`，可選擇設定 `CHECKIN_DB_PATH` 為 `D:\home\data\checkins.sqlite3`。儲存設定後確認應用程式已重新啟動。這些設定是 Azure App Service 設定，不是 GitHub Actions secrets，也不應寫入 workflow 或程式碼。
 
 ## 人臉偵測設定
 
