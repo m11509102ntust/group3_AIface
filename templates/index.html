@@ -19,7 +19,7 @@
           <a class="nav-item active" href="#dashboard"><span class="nav-icon">⌂</span>總覽</a>
           <a class="nav-item" href="#recognition"><span class="nav-icon">◎</span>人臉辨識</a>
           <a class="nav-item" href="#checkin"><span class="nav-icon">▤</span>打卡紀錄</a>
-          <a class="nav-item" href="#members"><span class="nav-icon">♙</span>人員管理</a>
+          {% if admin_authenticated %}<a class="nav-item" href="#members"><span class="nav-icon">♙</span>人員管理</a>{% endif %}
         </nav>
 
         <div class="sidebar-bottom">
@@ -36,7 +36,7 @@
           </div>
           <div class="topbar-actions">
             <button class="icon-button" type="button" aria-label="通知">♧<i></i></button>
-            <div class="profile"><span class="avatar">A</span><span><strong>管理員</strong><small>{{ "已登入" if checkin_authenticated else "尚未登入" }}</small></span></div>
+            <div class="profile"><span class="avatar">A</span><span><strong>{{ employee_name if employee_authenticated else "管理員" }}</strong><small>{{ "人員已登入" if employee_authenticated else ("管理員已登入" if admin_authenticated else "尚未登入") }}</small></span></div>
           </div>
         </header>
 
@@ -62,45 +62,68 @@
           <article class="stat-card"><div class="stat-heading"><span>示意待確認事件</span><span class="stat-icon orange">!</span></div><strong>03</strong><small class="trend warning">示意管理員事件</small><a href="#records" class="review-link">查看事件 →</a></article>
         </section>
 
-        <section class="checkin-grid" id="checkin">
+        <section class="checkin-grid{% if not admin_authenticated %} single-checkin-grid{% endif %}" id="checkin">
           <article class="panel">
             <div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>人員打卡</h2></div></div>
             {% if not checkin_configured %}
               <p class="notice error-notice">打卡登入尚未設定。請管理員在伺服器環境變數設定 CHECKIN_ADMIN_PASSWORD 和 FLASK_SECRET_KEY。</p>
-            {% elif not checkin_authenticated %}
-              <p class="form-description">請先登入管理員帳號，才能管理人員及登記打卡。</p>
-              {% if login_error %}<p class="notice error-notice" role="alert">{{ login_error }}</p>{% endif %}
-              <form class="checkin-form login-form" action="{{ url_for('login') }}" method="post">
+            {% elif admin_authenticated %}
+              <p class="form-description">管理員可新增人員，或確認後重設既有人員的 PIN。人員必須以自己的姓名與 PIN 登入打卡。</p>
+              <form class="checkin-form" id="person-form" data-csrf-token="{{ csrf_token }}">
+                <label for="person-name">人員姓名</label>
+                <input id="person-name" name="name" type="text" list="registered-people" maxlength="80" autocomplete="off" placeholder="輸入新姓名或選擇現有人員" required>
+                <datalist id="registered-people">
+                  {% for person in people %}<option value="{{ person.name }}">{% endfor %}
+                </datalist>
+                <label for="person-pin">初始或新 PIN（6 至 12 位數字）</label>
+                <input id="person-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12" autocomplete="new-password" required>
+                <button class="camera-button primary-camera-button" type="submit">新增人員／重設 PIN</button>
+              </form>
+              <p class="checkin-status" id="person-status" role="status" aria-live="polite">PIN 只會以雜湊形式儲存。</p>
+            {% elif employee_authenticated %}
+              <p class="form-description">已以個人 PIN 登入；本次打卡會記錄為 <strong>{{ employee_name }}</strong>。</p>
+              <form class="checkin-form" id="checkin-form" data-csrf-token="{{ csrf_token }}">
+                <button class="camera-button primary-camera-button" type="submit">記錄我的打卡</button>
+              </form>
+              <p class="checkin-status" id="checkin-status" role="status" aria-live="polite">打卡後只會記錄目前登入人員。</p>
+              <form class="logout-form" action="{{ url_for('logout') }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <label for="admin-password">管理員密碼</label>
-                <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
-                <button class="camera-button primary-camera-button" type="submit">登入</button>
+                <button class="camera-button" type="submit">登出</button>
               </form>
             {% else %}
-              <form class="checkin-form" id="checkin-form" data-csrf-token="{{ csrf_token }}">
-                <label for="checkin-name">姓名</label>
-                <div class="checkin-controls">
-                  <input id="checkin-name" name="name" type="text" list="registered-people" maxlength="80" autocomplete="off" placeholder="輸入或選擇姓名" required>
-                  <datalist id="registered-people">
-                    {% for person in people %}<option value="{{ person }}">{% endfor %}
-                  </datalist>
-                  <button class="camera-button primary-camera-button" type="submit">記錄打卡</button>
-                </div>
+              <p class="form-description">請使用已由管理員登記的姓名與個人 PIN 登入。未登記者請洽管理員新增。</p>
+              {% if request.args.get('person_login_error') %}<p class="notice error-notice" role="alert">{% if request.args.get('person_login_error') == '2' %}嘗試次數過多，請 15 分鐘後再試。{% else %}姓名或 PIN 不正確；未登記者請洽管理員。{% endif %}</p>{% endif %}
+              <form class="checkin-form login-form" action="{{ url_for('person_login') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label for="person-login-name">姓名</label>
+                <input id="person-login-name" name="name" type="text" maxlength="80" autocomplete="username" required>
+                <label for="person-login-pin">個人 PIN</label>
+                <input id="person-login-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12" autocomplete="current-password" required>
+                <button class="camera-button primary-camera-button" type="submit">登入並打卡</button>
               </form>
-              <p class="checkin-status" id="checkin-status" role="status" aria-live="polite">未登記的姓名會先詢問是否新增。</p>
+              <details class="admin-login">
+                <summary>管理員登入（人員管理）</summary>
+                {% if request.args.get('admin_login_error') %}<p class="notice error-notice" role="alert">{% if request.args.get('admin_login_error') == '2' %}嘗試次數過多，請 15 分鐘後再試。{% else %}管理員密碼不正確，請重試。{% endif %}</p>{% endif %}
+                <form class="checkin-form login-form" action="{{ url_for('login') }}" method="post">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <label for="admin-password">管理員密碼</label>
+                  <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+                  <button class="camera-button" type="submit">登入管理員</button>
+                </form>
+              </details>
             {% endif %}
             {% if database_error %}<p class="notice error-notice" role="alert">{{ database_error }}</p>{% endif %}
           </article>
 
-          {% if checkin_authenticated %}
+          {% if admin_authenticated %}
             <article class="panel" id="members">
               <div class="panel-header"><div><span class="section-label">REGISTERED PEOPLE</span><h2>已登記人員</h2></div><span class="member-count">{{ people|length }} 人</span></div>
               {% if people %}
                 <ul class="member-list" id="member-list">
-                  {% for person in people %}<li>{{ person }}</li>{% endfor %}
+                  {% for person in people %}<li data-name="{{ person.name }}">{{ person.name }}{% if not person.has_pin %}（需重設 PIN）{% endif %}</li>{% endfor %}
                 </ul>
               {% else %}
-                <p class="empty-state" id="member-empty">尚無人員資料。首次輸入姓名並確認後會自動新增。</p>
+                <p class="empty-state" id="member-empty">尚無人員資料。由管理員新增姓名並設定初始 PIN。</p>
                 <ul class="member-list" id="member-list" hidden></ul>
               {% endif %}
               <form class="logout-form" action="{{ url_for('logout') }}" method="post">
@@ -132,7 +155,7 @@
 
           <article class="panel activity-panel" id="records">
             <div class="panel-header"><div><span class="section-label">RECENT CHECK-INS</span><h2>最近打卡紀錄</h2></div></div>
-            {% if not checkin_authenticated %}
+            {% if not (admin_authenticated or employee_authenticated) %}
               <p class="empty-state">登入後即可查看已儲存的打卡紀錄。</p>
             {% elif checkins %}
               <div class="table-scroll">
@@ -146,13 +169,13 @@
                 </table>
               </div>
             {% else %}
-              <p class="empty-state">目前沒有打卡紀錄。</p>
+              <p class="empty-state" id="checkin-empty">目前沒有打卡紀錄。</p>
               <div class="table-scroll"><table class="checkin-table"><thead><tr><th>姓名</th><th>打卡時間（本地時區）</th></tr></thead><tbody id="checkin-records"></tbody></table></div>
             {% endif %}
           </article>
         </section>
 
-        <footer><span>© 2024 FaceSense AI</span><span>人臉偵測不會辨識姓名；打卡須登入管理員帳號。</span></footer>
+        <footer><span>© 2024 FaceSense AI</span><span>打卡以個人 PIN 驗證；人臉偵測不會辨識姓名。</span></footer>
       </main>
     </div>
     <script src="{{ url_for('static', filename='face-detect.js') }}" defer></script>
