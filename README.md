@@ -1,3 +1,5 @@
+#正式站
+https://ntustwebtest18.azurewebsites.net/
 # FaceSense AI 人臉偵測系統
 
 使用 Flask 製作的 AI 人臉偵測展示介面。控制台統計與最近活動仍是示意資料；即時人臉偵測可啟用瀏覽器攝影機，將單張 JPEG 影像送至 Face Detection API。
