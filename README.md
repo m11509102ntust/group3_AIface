@@ -20,7 +20,7 @@ python app.py
 接著開啟 http://127.0.0.1:5000/ 。若 PowerShell 不允許啟用虛擬環境，也可以使用 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` 和 `.\.venv\Scripts\python.exe app.py`。
 
 執行測試：`python -m unittest discover -s tests`
-
+部署:https://ntustwebtest18.azurewebsites.net/
 ## 打卡登入與 SQLite
 
 打卡頁面提供個人打卡登入及管理員人員管理。設定以下伺服器環境變數後，重新啟動應用程式：
