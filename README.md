@@ -2,7 +2,7 @@
 
 使用 Flask 製作的 AI 人臉偵測及打卡系統。控制台統計仍是示意資料；打卡紀錄、人員名冊會儲存在 SQLite 資料庫。即時人臉偵測可啟用瀏覽器攝影機，將單張 JPEG 影像送至 Face Detection API。
 
-即時功能只偵測臉部位置，不會辨識姓名或自動打卡。打卡由已登入的管理員輸入姓名；新姓名需確認後才會建立人員資料並記錄該次打卡。系統使用單一共用管理員密碼，並非個別員工帳號，不能單獨驗證每位打卡者身分。影像不會由此 Flask 應用程式保存。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
+即時功能只偵測臉部位置，不會辨識姓名或自動打卡。每位人員以姓名和個人 PIN 登入後，只能記錄自己的打卡及查看自己的紀錄。管理員使用獨立密碼管理名冊，新增人員或確認後重設其 PIN；未登記人員不能自行註冊或占用姓名。PIN 以 PBKDF2 雜湊儲存，不會保存明文。影像不會由此 Flask 應用程式保存。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
 
 偵測回應目前以 JSON 原文顯示；供應商的 OpenAPI 文件沒有描述回應欄位結構，因此尚未繪製臉部框。後端另設每個來源 IP 每分鐘 10 次的程序內限流；此限制會在程序重啟時重設，多個應用程式執行個體不會共用計數。
 
@@ -23,11 +23,13 @@ python app.py
 
 ## 打卡登入與 SQLite
 
-打卡頁面需要管理員登入。設定以下伺服器環境變數後，重新啟動應用程式：
+打卡頁面提供個人打卡登入及管理員人員管理。設定以下伺服器環境變數後，重新啟動應用程式：
 
-- `CHECKIN_ADMIN_PASSWORD`：設定強且獨有的管理員密碼。此版本使用單一共用管理員密碼，任何取得密碼的人都能新增人員與打卡。
+- `CHECKIN_ADMIN_PASSWORD`：設定強且獨有的管理員密碼。管理員可新增人員及設定／重設個人 PIN；此密碼不會用於一般人員打卡。
 - `FLASK_SECRET_KEY`：Flask 簽署登入 session 的隨機秘密；請使用高熵值，勿重複使用 API key 或提交至 Git。
 - `CHECKIN_DB_PATH`（選用）：SQLite 檔案的完整路徑。未設定時，本機使用 Flask `instance` 資料夾；Azure Windows App Service 使用 `D:\home\data\checkins.sqlite3`。
+
+管理員先登入人員管理，輸入姓名與 6 至 12 位數字 PIN；新姓名會先要求確認，已存在姓名會先要求確認重設 PIN。人員以已登記的姓名與 PIN 登入後，打卡紀錄由登入的 person ID 決定，不能從瀏覽器指定其他姓名。個人 PIN 依姓名、管理員登入依管理員帳號，皆限制每個程序 15 分鐘內最多 5 次嘗試；程序重啟或多個執行個體不會共用計數。員工若看見「姓名或 PIN 不正確」，請確認姓名是否已由管理員登記。
 
 可使用 Python 產生秘密值（請在自己的終端機執行，不要將輸出貼到聊天或提交到儲存庫）：
 
@@ -43,7 +45,7 @@ $env:FLASK_SECRET_KEY = "自行產生的隨機秘密"
 python app.py
 ```
 
-資料庫會建立 `people` 人員名冊，以及 `mytable` 打卡資料表（包含 `姓名`、`打卡時間` 欄位）。姓名未登記時，頁面先詢問確認；確認後會以一筆資料庫交易新增人員並記錄本次打卡。時間以 UTC ISO-8601 格式儲存，頁面依瀏覽器時區顯示。Azure 預設路徑位於持久化的 `D:\home`，不要將資料庫指定到部署目錄；若覆寫 `CHECKIN_DB_PATH`，仍須選用 Azure 持久資料目錄並自行安排備份。
+資料庫會建立 `people` 人員名冊（含個人 PIN 雜湊），以及 `mytable` 打卡資料表（包含 `姓名`、`打卡時間` 欄位）。每筆打卡以資料庫交易記錄。時間以 UTC ISO-8601 格式儲存，頁面依瀏覽器時區顯示。Azure 預設路徑位於持久化的 `D:\home`，不要將資料庫指定到部署目錄；若覆寫 `CHECKIN_DB_PATH`，仍須選用 Azure 持久資料目錄並自行安排備份。
 
 Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHECKIN_ADMIN_PASSWORD`、`FLASK_SECRET_KEY`，可選擇設定 `CHECKIN_DB_PATH` 為 `D:\home\data\checkins.sqlite3`。儲存設定後確認應用程式已重新啟動。這些設定是 Azure App Service 設定，不是 GitHub Actions secrets，也不應寫入 workflow 或程式碼。
 
