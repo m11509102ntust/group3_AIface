@@ -21,6 +21,8 @@ python app.py
 
 執行測試：`python -m unittest discover -s tests`
 
+##正式站: https://ntustwebtest18.azurewebsites.net/
+
 ## 打卡登入與 SQLite
 
 打卡頁面提供個人打卡登入及管理員人員管理。設定以下伺服器環境變數後，重新啟動應用程式：
