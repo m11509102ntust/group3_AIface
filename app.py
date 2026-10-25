@@ -98,9 +98,29 @@ def _connect_db():
         """
     )
     connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            name TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "INSERT OR IGNORE INTO app_settings (name, value) "
+        "VALUES ('face_detection_enabled', 'true')"
+    )
+    connection.execute(
         'CREATE INDEX IF NOT EXISTS idx_mytable_checkin_time ON mytable("打卡時間")'
     )
+    connection.commit()
     return connection
+
+
+def _face_detection_enabled(connection):
+    setting = connection.execute(
+        "SELECT value FROM app_settings WHERE name = 'face_detection_enabled'"
+    ).fetchone()
+    return setting is None or setting["value"] == "true"
 
 
 def _csrf_token():
@@ -215,6 +235,8 @@ def _allow_face_detection(client_ip):
 @app.get("/")
 def index():
     checkin_configured = _checkin_settings_ready()
+    face_detection_configured = bool(os.getenv("FACE_DETECT_API_KEY", "").strip())
+    face_detection_enabled = True
     admin_authenticated = bool(
         checkin_configured and session.get("checkin_admin_authenticated")
     )
@@ -225,64 +247,90 @@ def index():
     employee_name = None
     database_error = None
 
-    if admin_authenticated or employee_authenticated:
-        try:
-            with closing(_connect_db()) as connection:
-                if admin_authenticated:
-                    people = [
-                        dict(row)
-                        for row in connection.execute(
-                            "SELECT name, pin_hash IS NOT NULL AS has_pin "
-                            "FROM people ORDER BY name COLLATE NOCASE"
-                        )
-                    ]
-                if employee_authenticated:
-                    person = connection.execute(
-                        "SELECT name, pin_hash FROM people WHERE id = ?", (employee_id,)
-                    ).fetchone()
-                    if (
-                        person is None
-                        or not session.get("checkin_pin_hash")
-                        or not hmac.compare_digest(
-                            person["pin_hash"] or "",
-                            session["checkin_pin_hash"],
-                        )
-                    ):
-                        session.pop("checkin_person_id", None)
-                        session.pop("checkin_pin_hash", None)
-                        employee_authenticated = False
-                    else:
-                        employee_name = person["name"]
-
-                if admin_authenticated:
-                    records_query = (
-                        'SELECT "姓名" AS name, "打卡時間" AS checkin_time '
-                        "FROM mytable ORDER BY id DESC LIMIT 50"
+    dashboard_metrics = None
+    database_ready = False
+    try:
+        with closing(_connect_db()) as connection:
+            database_ready = True
+            face_detection_enabled = _face_detection_enabled(connection)
+            if admin_authenticated:
+                people = [
+                    dict(row)
+                    for row in connection.execute(
+                        "SELECT name, pin_hash IS NOT NULL AS has_pin "
+                        "FROM people ORDER BY name COLLATE NOCASE"
                     )
-                    checkins = [
-                        dict(row) for row in connection.execute(records_query)
-                    ]
-                elif employee_authenticated:
-                    checkins = [
-                        dict(row)
-                        for row in connection.execute(
-                            'SELECT "姓名" AS name, "打卡時間" AS checkin_time '
-                            "FROM mytable WHERE person_id = ? "
-                            "ORDER BY id DESC LIMIT 50",
-                            (employee_id,),
-                        )
-                    ]
-        except sqlite3.Error:
-            app.logger.exception("Could not load SQLite check-in data")
-            database_error = "無法讀取打卡資料庫，請稍後再試。"
+                ]
+            if employee_authenticated:
+                person = connection.execute(
+                    "SELECT name, pin_hash FROM people WHERE id = ?", (employee_id,)
+                ).fetchone()
+                if (
+                    person is None
+                    or not session.get("checkin_pin_hash")
+                    or not hmac.compare_digest(
+                        person["pin_hash"] or "",
+                        session["checkin_pin_hash"],
+                    )
+                ):
+                    session.pop("checkin_person_id", None)
+                    session.pop("checkin_pin_hash", None)
+                    employee_authenticated = False
+                else:
+                    employee_name = person["name"]
+
+            if admin_authenticated or employee_authenticated:
+                today = datetime.now(timezone.utc).date().isoformat() + "%"
+                record_filter = ""
+                query_params = [today]
+                if employee_authenticated and not admin_authenticated:
+                    record_filter = " AND person_id = ?"
+                    query_params.append(employee_id)
+
+                today_summary = connection.execute(
+                    'SELECT COUNT(*) AS checkin_count, '
+                    "COUNT(DISTINCT person_id) AS attendee_count "
+                    'FROM mytable WHERE "打卡時間" LIKE ?' + record_filter,
+                    query_params,
+                ).fetchone()
+                dashboard_metrics = {
+                    "today_checkins": today_summary["checkin_count"],
+                    "today_attendees": today_summary["attendee_count"],
+                    "people_count": (
+                        connection.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+                        if admin_authenticated
+                        else None
+                    ),
+                }
+
+                records_query = (
+                    'SELECT "姓名" AS name, "打卡時間" AS checkin_time '
+                    "FROM mytable"
+                )
+                records_params = []
+                if employee_authenticated and not admin_authenticated:
+                    records_query += " WHERE person_id = ?"
+                    records_params.append(employee_id)
+                records_query += " ORDER BY id DESC LIMIT 50"
+                checkins = [
+                    dict(row)
+                    for row in connection.execute(records_query, records_params)
+                ]
+    except sqlite3.Error:
+        app.logger.exception("Could not load SQLite dashboard and check-in data")
+        database_ready = False
+        database_error = "無法讀取打卡資料庫，請稍後再試。"
 
     return render_template(
         "index.html",
-        face_detection_configured=bool(os.getenv("FACE_DETECT_API_KEY", "").strip()),
+        face_detection_configured=face_detection_configured,
+        face_detection_enabled=face_detection_enabled,
         checkin_configured=checkin_configured,
+        database_ready=database_ready,
         admin_authenticated=admin_authenticated,
         employee_authenticated=employee_authenticated,
         employee_name=employee_name,
+        dashboard_metrics=dashboard_metrics,
         csrf_token=_csrf_token() if checkin_configured else "",
         people=people,
         checkins=checkins,
@@ -475,10 +523,46 @@ def create_checkin():
     return jsonify(name=name, checkin_time=checked_at), 201
 
 
+@app.post("/api/settings/face-detection")
+@_admin_required
+def update_face_detection_setting():
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    if not os.getenv("FACE_DETECT_API_KEY", "").strip():
+        return jsonify(error="尚未設定人臉偵測 API 金鑰，無法啟用此功能。"), 409
+
+    payload = request.get_json(silent=True)
+    enabled = payload.get("enabled") if isinstance(payload, dict) else None
+    if not isinstance(enabled, bool):
+        return jsonify(error="設定值必須是布林值。"), 400
+
+    try:
+        with closing(_connect_db()) as connection:
+            connection.execute(
+                "UPDATE app_settings SET value = ? "
+                "WHERE name = 'face_detection_enabled'",
+                ("true" if enabled else "false",),
+            )
+            connection.commit()
+    except sqlite3.Error:
+        app.logger.exception("Could not update face detection setting")
+        return jsonify(error="系統設定儲存失敗，請稍後再試。"), 500
+
+    return jsonify(enabled=enabled)
+
+
 @app.post("/api/face/detect")
 def detect_face():
     if not _allow_face_detection(request.remote_addr or "unknown"):
         return jsonify(error="偵測次數過多，請稍後再試。"), 429
+
+    try:
+        with closing(_connect_db()) as connection:
+            if not _face_detection_enabled(connection):
+                return jsonify(error="人臉偵測功能目前由管理員停用。"), 503
+    except sqlite3.Error:
+        app.logger.exception("Could not load face detection setting")
+        return jsonify(error="目前無法讀取人臉偵測設定。"), 503
 
     api_key = os.getenv("FACE_DETECT_API_KEY", "").strip()
     if not api_key:

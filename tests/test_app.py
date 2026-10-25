@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
+from datetime import datetime, timezone
 from unittest.mock import Mock, patch
 
 import requests
@@ -96,6 +97,71 @@ class FaceSenseAppTests(unittest.TestCase):
         self.assertIn("管理員登入（人員管理）", page)
         self.assertIn("登入後即可查看已儲存的打卡紀錄", page)
         self.assertIn("不辨識身份或記錄打卡", page)
+        self.assertIn("今日打卡筆數", page)
+        self.assertIn("系統設定與服務狀態", page)
+        self.assertNotIn("示意", page)
+        self.assertNotIn("1,284", page)
+        self.assertNotIn("待確認事件", page)
+        self.assertNotIn('aria-label="通知"', page)
+
+    def test_dashboard_metrics_use_real_attendance_and_are_private(self):
+        self.assertEqual(self._login().status_code, 302)
+        self.assertEqual(self._register_person("王小明", "123456").status_code, 201)
+        today = datetime.now(timezone.utc).date().isoformat()
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            connection.execute(
+                'INSERT INTO mytable (person_id, "姓名", "打卡時間") '
+                "VALUES (1, ?, ?), (1, ?, ?)",
+                (
+                    "王小明",
+                    f"{today}T08:00:00Z",
+                    "王小明",
+                    f"{today}T09:00:00Z",
+                ),
+            )
+            connection.commit()
+
+        admin_page = self.client.get("/").get_data(as_text=True)
+        self.assertIn(">2</strong>", admin_page)
+        self.assertIn(">1</strong>", admin_page)
+
+        anonymous_client = app.test_client()
+        anonymous_page = anonymous_client.get("/").get_data(as_text=True)
+        self.assertNotIn(">2</strong>", anonymous_page)
+        self.assertNotIn("王小明", anonymous_page)
+
+    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    def test_admin_can_disable_face_detection_and_detection_is_blocked(self):
+        self.assertEqual(self._login().status_code, 302)
+        response = self.client.post(
+            "/api/settings/face-detection",
+            json={"enabled": False},
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"enabled": False})
+
+        image_base64 = base64.b64encode(b"\xff\xd8\xffsample-jpeg").decode("ascii")
+        response = self.client.post(
+            "/api/face/detect",
+            json={"image_base64": image_base64},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("管理員停用", response.get_json()["error"])
+
+    def test_face_detection_setting_requires_admin_and_csrf(self):
+        response = self.client.post(
+            "/api/settings/face-detection",
+            json={"enabled": False},
+        )
+        self.assertEqual(response.status_code, 401)
+
+        self.assertEqual(self._login().status_code, 302)
+        response = self.client.post(
+            "/api/settings/face-detection",
+            json={"enabled": False},
+        )
+        self.assertEqual(response.status_code, 400)
 
     def test_checkins_require_login(self):
         response = self.client.post(

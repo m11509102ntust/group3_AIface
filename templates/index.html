@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="FaceSense AI 人臉偵測展示介面。">
+    <meta name="description" content="FaceSense 人臉位置偵測與個人 PIN SQLite 出勤管理。">
     <title>FaceSense · AI 人臉偵測系統</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   </head>
@@ -17,14 +17,14 @@
 
         <nav class="main-nav" aria-label="主要導覽">
           <a class="nav-item active" href="#dashboard"><span class="nav-icon">⌂</span>總覽</a>
-          <a class="nav-item" href="#recognition"><span class="nav-icon">◎</span>人臉辨識</a>
+          <a class="nav-item" href="#recognition"><span class="nav-icon">◎</span>人臉偵測</a>
           <a class="nav-item" href="#checkin"><span class="nav-icon">▤</span>打卡紀錄</a>
           {% if admin_authenticated %}<a class="nav-item" href="#members"><span class="nav-icon">♙</span>人員管理</a>{% endif %}
+          <a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>系統設定</a>
         </nav>
 
         <div class="sidebar-bottom">
-          <a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>系統設定</a>
-          <div class="system-status"><span class="status-dot"></span><span><strong>{{ "人臉偵測已設定" if face_detection_configured else "展示模式" }}</strong><small>{{ "可啟用攝影機" if face_detection_configured else "需設定 API 金鑰" }}</small></span></div>
+          <div class="system-status"><span class="status-dot{% if not face_detection_configured or not face_detection_enabled %} status-dot-off{% endif %}"></span><span><strong>{{ "人臉偵測可用" if face_detection_configured and face_detection_enabled else ("人臉偵測已停用" if not face_detection_enabled else "需設定 API 金鑰") }}</strong><small>{{ "僅偵測臉部位置" if face_detection_configured and face_detection_enabled else "請查看系統設定" }}</small></span></div>
         </div>
       </aside>
 
@@ -35,7 +35,6 @@
             <h1>AI 人臉偵測系統 <span>👋</span></h1>
           </div>
           <div class="topbar-actions">
-            <button class="icon-button" type="button" aria-label="通知">♧<i></i></button>
             <div class="profile"><span class="avatar">A</span><span><strong>{{ employee_name if employee_authenticated else "管理員" }}</strong><small>{{ "人員已登入" if employee_authenticated else ("管理員已登入" if admin_authenticated else "尚未登入") }}</small></span></div>
           </div>
         </header>
@@ -51,15 +50,39 @@
             <div class="scan-ring ring-a"></div><div class="scan-ring ring-b"></div>
             <div class="face-outline"><span class="eye left"></span><span class="eye right"></span><span class="nose"></span><span class="mouth"></span></div>
             <span class="art-label label-top">AI SCAN <b>●</b></span>
-            <span class="art-label label-bottom">DETECTING...</span>
+            <span class="art-label label-bottom">FACE DETECTION</span>
           </div>
         </section>
 
-        <section class="stats-grid" aria-label="今日統計（示意資料）">
-          <article class="stat-card"><div class="stat-heading"><span>示意辨識次數</span><span class="stat-icon blue">◎</span></div><strong>1,284</strong><small class="trend up">↗ 12.8% <em>較昨日</em></small><div class="mini-bars blue-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
-          <article class="stat-card"><div class="stat-heading"><span>示意成功辨識率</span><span class="stat-icon green">✓</span></div><strong>98.6<small>%</small></strong><small class="trend up">↗ 2.4% <em>較昨日</em></small><div class="progress"><i style="width: 86%"></i></div></article>
-          <article class="stat-card"><div class="stat-heading"><span>示意場域人數</span><span class="stat-icon purple">♙</span></div><strong>36</strong><small class="trend neutral">示意在線人員</small><div class="people-dots"><i>A</i><i>J</i><i>K</i><i>+</i></div></article>
-          <article class="stat-card"><div class="stat-heading"><span>示意待確認事件</span><span class="stat-icon orange">!</span></div><strong>03</strong><small class="trend warning">示意管理員事件</small><a href="#records" class="review-link">查看事件 →</a></article>
+        <section class="stats-grid" aria-label="真實出勤統計">
+          <article class="stat-card">
+            <div class="stat-heading"><span>今日打卡筆數</span><span class="stat-icon blue">▤</span></div>
+            <strong>{{ dashboard_metrics.today_checkins if dashboard_metrics is not none else "—" }}</strong>
+            <small class="trend neutral">{{ "依登入權限顯示" if dashboard_metrics is not none else "登入後查看" }}</small>
+          </article>
+          <article class="stat-card">
+            <div class="stat-heading"><span>今日打卡人數</span><span class="stat-icon green">✓</span></div>
+            <strong>{{ dashboard_metrics.today_attendees if dashboard_metrics is not none else "—" }}</strong>
+            <small class="trend neutral">{{ "不重複人員" if dashboard_metrics is not none else "登入後查看" }}</small>
+          </article>
+          <article class="stat-card">
+            <div class="stat-heading"><span>{{ "已登記人數" if admin_authenticated else "本人今日打卡" }}</span><span class="stat-icon purple">♙</span></div>
+            {% if admin_authenticated and dashboard_metrics is not none %}
+              <strong>{{ dashboard_metrics.people_count }}</strong>
+              <small class="trend neutral">管理員名冊統計</small>
+            {% elif employee_authenticated and dashboard_metrics is not none %}
+              <strong>{{ "已打卡" if dashboard_metrics.today_checkins else "未打卡" }}</strong>
+              <small class="trend neutral">僅顯示本人資料</small>
+            {% else %}
+              <strong>—</strong>
+              <small class="trend neutral">登入後查看</small>
+            {% endif %}
+          </article>
+          <article class="stat-card">
+            <div class="stat-heading"><span>人臉偵測服務</span><span class="stat-icon{% if face_detection_configured and face_detection_enabled %} green{% else %} orange{% endif %}">◎</span></div>
+            <strong class="service-stat">{{ "可使用" if face_detection_configured and face_detection_enabled else ("管理員停用" if not face_detection_enabled else "未設定") }}</strong>
+            <small class="trend neutral">只偵測位置，不辨識身份</small>
+          </article>
         </section>
 
         <section class="checkin-grid{% if not admin_authenticated %} single-checkin-grid{% endif %}" id="checkin">
@@ -175,10 +198,45 @@
           </article>
         </section>
 
+        <section class="settings-section" id="settings">
+          <article class="panel">
+            <div class="panel-header"><div><span class="section-label">SYSTEM SETTINGS</span><h2>系統設定與服務狀態</h2></div></div>
+            <dl class="settings-list">
+              <div><dt>打卡資料庫</dt><dd>{{ "可讀取" if database_ready else "無法讀取" }}</dd></div>
+              <div><dt>個人 PIN 打卡</dt><dd>{{ "已設定" if checkin_configured else "尚未設定伺服器密碼與 Flask 金鑰" }}</dd></div>
+              <div><dt>人臉偵測 API 金鑰</dt><dd>{{ "已設定（不顯示金鑰）" if face_detection_configured else "尚未設定" }}</dd></div>
+              <div><dt>身份辨識</dt><dd>尚未設定服務；目前只偵測臉部位置</dd></div>
+            </dl>
+            {% if admin_authenticated %}
+              <div class="settings-control">
+                <div>
+                  <strong>允許使用人臉偵測</strong>
+                  <p class="form-description">停用後，攝影機偵測請求會被拒絕；此開關不會變更或顯示 API 金鑰。</p>
+                </div>
+                <label class="settings-switch" for="face-detection-enabled">
+                  <input id="face-detection-enabled" type="checkbox" data-csrf-token="{{ csrf_token }}" {% if face_detection_enabled %}checked{% endif %} {% if not face_detection_configured %}disabled{% endif %}>
+                  <span>{{ "未設定 API 金鑰" if not face_detection_configured else ("啟用中" if face_detection_enabled else "已停用") }}</span>
+                </label>
+              </div>
+              <p class="checkin-status" id="settings-status" role="status" aria-live="polite"></p>
+              {% if not face_detection_configured %}
+                <p class="form-description">API 金鑰請由管理員在 Azure Portal → App Service → Settings → Environment variables 設定 FACE_DETECT_API_KEY，再重新啟動服務。不要在網站輸入或分享金鑰。</p>
+              {% endif %}
+            {% else %}
+              <p class="form-description">服務密碼與 API 金鑰由 Azure App Service 環境變數管理，不會放在網站表單。管理員登入後可切換人臉偵測開關。</p>
+            {% endif %}
+            {% if not checkin_configured %}
+              <p class="form-description">啟用打卡需由 Azure 管理員設定 CHECKIN_ADMIN_PASSWORD 與 FLASK_SECRET_KEY，並重新啟動 App Service。</p>
+            {% endif %}
+            <p class="form-description">身份辨識需要另選支援身份比對的服務，並在取得每位人員明確同意後登記；目前尚未啟用，也不會由人臉偵測結果推測身份。</p>
+          </article>
+        </section>
+
         <footer><span>© 2024 FaceSense AI</span><span>打卡以個人 PIN 驗證；人臉偵測不會辨識姓名。</span></footer>
       </main>
     </div>
     <script src="{{ url_for('static', filename='face-detect.js') }}" defer></script>
     <script src="{{ url_for('static', filename='checkin.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='site-settings.js') }}" defer></script>
   </body>
 </html>
