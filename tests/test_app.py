@@ -520,6 +520,13 @@ class FaceSenseAppTests(unittest.TestCase):
         finally:
             app.secret_key = original_secret_key
 
+    def test_enrollment_warning_only_lists_missing_server_settings(self):
+        with patch.dict(os.environ, {"CHECKIN_ADMIN_PASSWORD": ""}):
+            page = self.client.get("/").get_data(as_text=True)
+        self.assertIn("CHECKIN_ADMIN_PASSWORD", page)
+        warning = page.split("管理員審核尚未啟用", 1)[1].split("</p>", 1)[0]
+        self.assertNotIn("FLASK_SECRET_KEY", warning)
+
     def test_admin_can_save_and_delete_a_face_photo(self):
         self.assertEqual(
             self.client.delete("/api/people/1/face-photo").status_code,

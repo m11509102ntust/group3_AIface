@@ -127,7 +127,7 @@
             <div class="panel-header"><div><span class="section-label">FACE ENROLLMENT</span><h2>先拍照，再提交建檔</h2></div></div>
             <p class="form-description">先拍攝並確認照片，再填姓名與個人 PIN。申請待管理員核准前，不會加入打卡名冊。</p>
             {% if not checkin_configured %}
-              <p class="notice error-notice">管理員尚未設定建檔審核所需的伺服器環境變數。設定 <code>CHECKIN_ADMIN_PASSWORD</code> 與 <code>FLASK_SECRET_KEY</code> 後，才能提交申請及由管理員核准。</p>
+              <p class="notice error-notice">管理員審核尚未啟用。請在 Azure 設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 與 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}，再重新啟動 App Service，才能提交申請及核准。</p>
             {% endif %}
             <div class="camera-frame enrollment-camera-frame" id="enrollment-camera-frame">
               <div class="camera-grid"></div>
