@@ -27,6 +27,7 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 .camera-frame video { display: none; }
 .camera-frame.camera-active video { display: block; }
 .camera-frame.camera-active .camera-placeholder { display: none; }
+.camera-frame.photo-captured img { position: absolute; inset: 0; z-index: 2; display: block; width: 100%; height: 100%; object-fit: contain; }
 .camera-frame canvas { z-index: 2; pointer-events: none; }
 .camera-placeholder { z-index: 2; max-width: 80%; color: #c4d6d9; font-size: 13px; line-height: 1.7; text-align: center; }
 .camera-meta { z-index: 3; max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -60,6 +61,12 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 .member-list li > span { display: grid; gap: 3px; }
 .face-sample-state { color: #71878d; font-size: 10px; }
 .member-list .delete-face-photo { padding: 5px 8px; font-size: 10px; }
+.admin-enrollment-grid { margin-top: 24px; }
+.pending-enrollment-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.pending-enrollment-list li { display: flex; align-items: center; gap: 14px; padding: 12px; border: 1px solid #e6edef; border-radius: 8px; }
+.pending-enrollment-list img { width: 112px; height: 112px; border-radius: 6px; background: #102d37; object-fit: contain; }
+.pending-enrollment-details { display: grid; gap: 7px; color: #31535a; font-size: 12px; }
+.pending-enrollment-details small { color: #71878d; }
 .logout-form { margin-top: 16px; }
 .table-scroll { overflow-x: auto; }
 .checkin-table { width: 100%; border-collapse: collapse; text-align: left; }

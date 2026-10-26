@@ -39,8 +39,8 @@
           <div>
             <span class="eyebrow"><i></i> FACE ENROLLMENT</span>
             <h2>倒數拍照建檔，為後續<br><em>身份辨識準備資料。</em></h2>
-            <p>管理員可在新增人員時倒數 5 秒拍照，將照片保存至 SQLite。此階段只建立照片資料，不會辨識身份。</p>
-            <a class="primary-button" href="#checkin">前往人員建檔 <span>→</span></a>
+            <p>本人先倒數 5 秒拍照並提交建檔申請；管理員確認後才會正式登記。此階段不會辨識身份。</p>
+            <a class="primary-button" href="#enrollment">拍照提出申請 <span>→</span></a>
           </div>
           <div class="welcome-art" aria-hidden="true">
             <div class="scan-ring ring-a"></div><div class="scan-ring ring-b"></div>
@@ -81,38 +81,13 @@
           </article>
         </section>
 
-        <section class="checkin-grid{% if not admin_authenticated %} single-checkin-grid{% endif %}" id="checkin">
+        <section class="checkin-grid" id="checkin">
           <article class="panel">
             <div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>人員打卡</h2></div></div>
             {% if not checkin_configured %}
               <p class="notice error-notice">打卡登入尚未設定。請管理員在伺服器環境變數設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 和 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}。</p>
             {% elif admin_authenticated %}
-              <p class="form-description">新增人員或確認重設 PIN 時，會倒數 5 秒拍照並將單張照片存入人臉資料庫。人員仍以個人 PIN 登入打卡。</p>
-              <div class="camera-frame enrollment-camera-frame" id="enrollment-camera-frame">
-                <div class="camera-grid"></div>
-                <div class="camera-placeholder" id="enrollment-camera-placeholder">啟動攝影機後，新增人員時會倒數 5 秒拍照</div>
-                <video id="enrollment-video" autoplay muted playsinline aria-label="人臉建檔攝影機即時畫面"></video>
-                <canvas id="enrollment-canvas" hidden aria-hidden="true"></canvas>
-                <span class="camera-meta">照片保存於伺服器 SQLite；不會送往偵測 API</span>
-                <span class="camera-countdown" id="enrollment-countdown" aria-hidden="true"></span>
-              </div>
-              <div class="camera-controls">
-                <button class="camera-button" id="start-enrollment-camera" type="button">啟動攝影機</button>
-                <button class="camera-button" id="stop-enrollment-camera" type="button" disabled>停止攝影機</button>
-              </div>
-              <p class="camera-status" id="enrollment-status" role="status" aria-live="polite">請先啟動攝影機。</p>
-              <form class="checkin-form" id="person-form" data-csrf-token="{{ csrf_token }}">
-                <label for="person-name">人員姓名</label>
-                <input id="person-name" name="name" type="text" list="registered-people" maxlength="80" autocomplete="off" placeholder="輸入新姓名或選擇現有人員" required>
-                <datalist id="registered-people">
-                  {% for person in people %}<option value="{{ person.name }}">{% endfor %}
-                </datalist>
-                <label for="person-pin">初始或新 PIN（6 至 12 位數字）</label>
-                <input id="person-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12" autocomplete="new-password" required>
-                <label class="consent-check"><input id="face-image-consent" name="face_image_consent" type="checkbox" required>本人已明確同意保存這張人臉照片。</label>
-                <button class="camera-button primary-camera-button" type="submit">倒數拍照並建立資料</button>
-              </form>
-              <p class="checkin-status" id="person-status" role="status" aria-live="polite">PIN 以雜湊儲存；每位人員僅保留一張照片，可由管理員刪除。</p>
+              <p class="form-description">建檔申請由本人先提交，管理員核准後才會新增至打卡名冊。</p>
             {% elif employee_authenticated %}
               <p class="form-description">已以個人 PIN 登入；本次打卡會記錄為 <strong>{{ employee_name }}</strong>。</p>
               <form class="checkin-form" id="checkin-form" data-csrf-token="{{ csrf_token }}">
@@ -124,7 +99,7 @@
                 <button class="camera-button" type="submit">登出</button>
               </form>
             {% else %}
-              <p class="form-description">請使用已由管理員登記的姓名與個人 PIN 登入。未登記者請洽管理員新增。</p>
+              <p class="form-description">請使用已由管理員核准的姓名與個人 PIN 登入。尚未登記者可先提交建檔申請，核准後即可登入打卡。</p>
               {% if request.args.get('person_login_error') %}<p class="notice error-notice" role="alert">{% if request.args.get('person_login_error') == '2' %}嘗試次數過多，請 15 分鐘後再試。{% else %}姓名或 PIN 不正確；未登記者請洽管理員。{% endif %}</p>{% endif %}
               <form class="checkin-form login-form" action="{{ url_for('person_login') }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -148,7 +123,64 @@
             {% if database_error %}<p class="notice error-notice" role="alert">{{ database_error }}</p>{% endif %}
           </article>
 
-          {% if admin_authenticated %}
+          <article class="panel" id="enrollment">
+            <div class="panel-header"><div><span class="section-label">FACE ENROLLMENT</span><h2>先拍照，再提交建檔</h2></div></div>
+            <p class="form-description">先拍攝並確認照片，再填姓名與個人 PIN。申請待管理員核准前，不會加入打卡名冊。</p>
+            {% if not checkin_configured %}
+              <p class="notice error-notice">管理員尚未設定建檔審核所需的伺服器環境變數。設定 <code>CHECKIN_ADMIN_PASSWORD</code> 與 <code>FLASK_SECRET_KEY</code> 後，才能提交申請及由管理員核准。</p>
+            {% endif %}
+            <div class="camera-frame enrollment-camera-frame" id="enrollment-camera-frame">
+              <div class="camera-grid"></div>
+              <div class="camera-placeholder" id="enrollment-camera-placeholder">啟動攝影機後，按「倒數拍照」</div>
+              <video id="enrollment-video" autoplay muted playsinline aria-label="人臉建檔攝影機即時畫面"></video>
+              <img id="enrollment-photo-preview" alt="拍攝完成的人臉照片預覽" hidden>
+              <canvas id="enrollment-canvas" hidden aria-hidden="true"></canvas>
+              <span class="camera-meta">照片會在管理員核准後存入 SQLite</span>
+              <span class="camera-countdown" id="enrollment-countdown" aria-hidden="true"></span>
+            </div>
+            <div class="camera-controls">
+              <button class="camera-button" id="start-enrollment-camera" type="button" {% if not checkin_configured %}disabled{% endif %}>啟動攝影機／重新拍照</button>
+              <button class="camera-button" id="capture-enrollment-photo" type="button" disabled>倒數 5 秒拍照</button>
+              <button class="camera-button" id="stop-enrollment-camera" type="button" disabled>停止攝影機</button>
+            </div>
+            <p class="camera-status" id="enrollment-status" role="status" aria-live="polite">請先啟動攝影機。</p>
+            <form class="checkin-form" id="person-form" data-csrf-token="{{ csrf_token }}" data-enabled="{{ 'true' if checkin_configured else 'false' }}">
+              <label for="person-name">人員姓名</label>
+              <input id="person-name" name="name" type="text" maxlength="80" autocomplete="name" required {% if not checkin_configured %}disabled{% endif %}>
+              <label for="person-pin">設定個人 PIN（6 至 12 位數字）</label>
+              <input id="person-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12" autocomplete="new-password" required {% if not checkin_configured %}disabled{% endif %}>
+              <label class="consent-check"><input id="face-image-consent" name="face_image_consent" type="checkbox" required {% if not checkin_configured %}disabled{% endif %}>本人已明確同意提交並保存這張人臉照片。</label>
+              <button class="camera-button primary-camera-button" type="submit" disabled>提交管理員審核</button>
+            </form>
+            <p class="checkin-status" id="person-status" role="status" aria-live="polite">照片只暫存在目前瀏覽器；提交後等待管理員確認，拒絕申請會刪除待審資料。</p>
+          </article>
+        </section>
+
+        {% if admin_authenticated %}
+          <section class="content-grid admin-enrollment-grid">
+            <article class="panel" id="pending-enrollments">
+              <div class="panel-header"><div><span class="section-label">PENDING ENROLLMENTS</span><h2>待審建檔申請</h2></div><span class="member-count">{{ enrollment_requests|length }} 件</span></div>
+              {% if enrollment_requests %}
+                <ul class="pending-enrollment-list" id="pending-enrollment-list" data-csrf-token="{{ csrf_token }}">
+                  {% for enrollment in enrollment_requests %}
+                    <li data-request-id="{{ enrollment.id }}">
+                      <img src="{{ url_for('enrollment_request_photo', request_id=enrollment.id) }}" alt="{{ enrollment.name }} 的待審照片">
+                      <div class="pending-enrollment-details">
+                        <strong>{{ enrollment.name }}</strong>
+                        <small>提交時間：<time data-utc-time="{{ enrollment.created_at }}">{{ enrollment.created_at }}</time></small>
+                        <div class="camera-controls">
+                          <button class="camera-button approve-enrollment" type="button">核准建檔</button>
+                          <button class="camera-button reject-enrollment" type="button">拒絕並刪除</button>
+                        </div>
+                      </div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <p class="empty-state">目前沒有待審申請。</p>
+              {% endif %}
+              <p class="checkin-status" id="enrollment-review-status" role="status" aria-live="polite"></p>
+            </article>
             <article class="panel" id="members">
               <div class="panel-header"><div><span class="section-label">REGISTERED PEOPLE</span><h2>已登記人員</h2></div><span class="member-count">{{ people|length }} 人</span></div>
               {% if people %}
@@ -161,16 +193,16 @@
                   {% endfor %}
                 </ul>
               {% else %}
-                <p class="empty-state" id="member-empty">尚無人員資料。由管理員新增姓名並設定初始 PIN。</p>
+                <p class="empty-state" id="member-empty">尚無已核准人員。</p>
                 <ul class="member-list" id="member-list" hidden></ul>
               {% endif %}
               <form class="logout-form" action="{{ url_for('logout') }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button class="camera-button" type="submit">登出</button>
+                <button class="camera-button" type="submit">登出管理員</button>
               </form>
             </article>
-          {% endif %}
-        </section>
+          </section>
+        {% endif %}
 
         <section class="content-grid">
           <article class="panel activity-panel" id="records">
@@ -207,7 +239,7 @@
             {% if not checkin_configured %}
               <p class="form-description">啟用打卡需由 Azure 管理員設定 CHECKIN_ADMIN_PASSWORD 與 FLASK_SECRET_KEY，並重新啟動 App Service。</p>
             {% endif %}
-            <p class="form-description">請先取得本人明確同意再建檔。照片會留存在伺服器資料庫，管理員可透過人員管理刪除；目前不會上傳至 FACE_DETECT_API_KEY 對應的偵測服務，也尚未啟用身份辨識。</p>
+            <p class="form-description">提交前須取得本人明確同意；待審申請會保存在伺服器資料庫，管理員拒絕時即刪除，核准後可透過人員管理刪除照片。目前不會上傳至 FACE_DETECT_API_KEY 對應的偵測服務，也尚未啟用身份辨識。</p>
           </article>
         </section>
 
