@@ -85,3 +85,5 @@ jobs:
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           package: dist
+          app-settings: |
+            -FLASK_SECRET_KEY "${{ secrets.FLASK_SECRET_KEY }}"
