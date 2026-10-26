@@ -37,7 +37,10 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 .primary-camera-button { border-color: #1f8f82; background: #1f8f82; color: #fff; }
 .primary-camera-button:hover:not(:disabled) { background: #187a70; color: #fff; }
 .camera-status { min-height: 20px; margin: 12px 0; color: #66858a; font-size: 12px; }
-.detection-result { max-height: 190px; margin: 0; padding: 12px; overflow: auto; border-radius: 6px; background: #f3f7f7; color: #31535a; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.enrollment-camera-frame { margin-top: 16px; }
+.camera-countdown { position: absolute; z-index: 4; top: 50%; left: 50%; color: #fff; font-size: 72px; font-weight: 700; line-height: 1; text-shadow: 0 2px 15px #102d37; transform: translate(-50%, -50%); }
+.consent-check { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+.checkin-form .consent-check input { width: 16px; height: 16px; margin: 0; accent-color: #1f8f82; }
 .checkin-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .8fr); gap: 17px; margin-top: 24px; }
 .single-checkin-grid { grid-template-columns: minmax(0, 1fr); }
 .checkin-form { display: grid; gap: 9px; max-width: 480px; }
@@ -53,7 +56,10 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 .error-notice { background: #fff1ee; color: #a7463d; }
 .member-count { color: #789097; font-size: 11px; }
 .member-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.member-list li { padding: 7px 10px; border-radius: 5px; background: #e9f6f2; color: #247c70; font-size: 11px; }
+.member-list li { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 5px; background: #e9f6f2; color: #247c70; font-size: 11px; }
+.member-list li > span { display: grid; gap: 3px; }
+.face-sample-state { color: #71878d; font-size: 10px; }
+.member-list .delete-face-photo { padding: 5px 8px; font-size: 10px; }
 .logout-form { margin-top: 16px; }
 .table-scroll { overflow-x: auto; }
 .checkin-table { width: 100%; border-collapse: collapse; text-align: left; }

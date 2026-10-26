@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="FaceSense 人臉位置偵測與個人 PIN SQLite 出勤管理。">
-    <title>FaceSense · AI 人臉偵測系統</title>
+    <meta name="description" content="AI人臉辨識打卡系統測試。">
+    <title>AI人臉辨識打卡系統測試</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   </head>
   <body>
@@ -17,22 +17,18 @@
 
         <nav class="main-nav" aria-label="主要導覽">
           <a class="nav-item active" href="#dashboard"><span class="nav-icon">⌂</span>總覽</a>
-          <a class="nav-item" href="#recognition"><span class="nav-icon">◎</span>人臉偵測</a>
+          {% if admin_authenticated %}<a class="nav-item" href="#members"><span class="nav-icon">◎</span>人員／人臉建檔</a>{% endif %}
           <a class="nav-item" href="#checkin"><span class="nav-icon">▤</span>打卡紀錄</a>
-          {% if admin_authenticated %}<a class="nav-item" href="#members"><span class="nav-icon">♙</span>人員管理</a>{% endif %}
           <a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>系統設定</a>
         </nav>
 
-        <div class="sidebar-bottom">
-          <div class="system-status"><span class="status-dot{% if not face_detection_configured or not face_detection_enabled %} status-dot-off{% endif %}"></span><span><strong>{{ "人臉偵測可用" if face_detection_configured and face_detection_enabled else ("人臉偵測已停用" if not face_detection_enabled else "需設定 API 金鑰") }}</strong><small>{{ "僅偵測臉部位置" if face_detection_configured and face_detection_enabled else "請查看系統設定" }}</small></span></div>
-        </div>
       </aside>
 
       <main class="main-content" id="dashboard">
         <header class="topbar">
           <div>
             <span class="breadcrumb">控制台 <b>/</b> 今日總覽</span>
-            <h1>AI 人臉偵測系統 <span>👋</span></h1>
+            <h1>AI人臉辨識打卡系統測試 <span>👋</span></h1>
           </div>
           <div class="topbar-actions">
             <div class="profile"><span class="avatar">A</span><span><strong>{{ employee_name if employee_authenticated else "管理員" }}</strong><small>{{ "人員已登入" if employee_authenticated else ("管理員已登入" if admin_authenticated else "尚未登入") }}</small></span></div>
@@ -41,16 +37,16 @@
 
         <section class="welcome-card">
           <div>
-            <span class="eyebrow"><i></i> AI FACE DETECTION SYSTEM</span>
-            <h2>智慧偵測，讓安全<br><em>更簡單。</em></h2>
-            <p>使用瀏覽器攝影機拍攝影像，透過 AI 偵測人臉位置。此功能僅偵測人臉，不辨識身份或記錄打卡。</p>
-            <a class="primary-button" href="#recognition">開始偵測 <span>→</span></a>
+            <span class="eyebrow"><i></i> FACE ENROLLMENT</span>
+            <h2>倒數拍照建檔，為後續<br><em>身份辨識準備資料。</em></h2>
+            <p>管理員可在新增人員時倒數 5 秒拍照，將照片保存至 SQLite。此階段只建立照片資料，不會辨識身份。</p>
+            <a class="primary-button" href="#checkin">前往人員建檔 <span>→</span></a>
           </div>
           <div class="welcome-art" aria-hidden="true">
             <div class="scan-ring ring-a"></div><div class="scan-ring ring-b"></div>
             <div class="face-outline"><span class="eye left"></span><span class="eye right"></span><span class="nose"></span><span class="mouth"></span></div>
-            <span class="art-label label-top">AI SCAN <b>●</b></span>
-            <span class="art-label label-bottom">FACE DETECTION</span>
+            <span class="art-label label-top">FACE DATA <b>●</b></span>
+            <span class="art-label label-bottom">ENROLLMENT</span>
           </div>
         </section>
 
@@ -79,9 +75,9 @@
             {% endif %}
           </article>
           <article class="stat-card">
-            <div class="stat-heading"><span>人臉偵測服務</span><span class="stat-icon{% if face_detection_configured and face_detection_enabled %} green{% else %} orange{% endif %}">◎</span></div>
-            <strong class="service-stat">{{ "可使用" if face_detection_configured and face_detection_enabled else ("管理員停用" if not face_detection_enabled else "未設定") }}</strong>
-            <small class="trend neutral">只偵測位置，不辨識身份</small>
+            <div class="stat-heading"><span>身份辨識功能</span><span class="stat-icon orange">◎</span></div>
+            <strong class="service-stat">尚未接入</strong>
+            <small class="trend neutral">照片建檔不等於身份辨識</small>
           </article>
         </section>
 
@@ -91,7 +87,20 @@
             {% if not checkin_configured %}
               <p class="notice error-notice">打卡登入尚未設定。請管理員在伺服器環境變數設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 和 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}。</p>
             {% elif admin_authenticated %}
-              <p class="form-description">管理員可新增人員，或確認後重設既有人員的 PIN。人員必須以自己的姓名與 PIN 登入打卡。</p>
+              <p class="form-description">新增人員或確認重設 PIN 時，會倒數 5 秒拍照並將單張照片存入人臉資料庫。人員仍以個人 PIN 登入打卡。</p>
+              <div class="camera-frame enrollment-camera-frame" id="enrollment-camera-frame">
+                <div class="camera-grid"></div>
+                <div class="camera-placeholder" id="enrollment-camera-placeholder">啟動攝影機後，新增人員時會倒數 5 秒拍照</div>
+                <video id="enrollment-video" autoplay muted playsinline aria-label="人臉建檔攝影機即時畫面"></video>
+                <canvas id="enrollment-canvas" hidden aria-hidden="true"></canvas>
+                <span class="camera-meta">照片保存於伺服器 SQLite；不會送往偵測 API</span>
+                <span class="camera-countdown" id="enrollment-countdown" aria-hidden="true"></span>
+              </div>
+              <div class="camera-controls">
+                <button class="camera-button" id="start-enrollment-camera" type="button">啟動攝影機</button>
+                <button class="camera-button" id="stop-enrollment-camera" type="button" disabled>停止攝影機</button>
+              </div>
+              <p class="camera-status" id="enrollment-status" role="status" aria-live="polite">請先啟動攝影機。</p>
               <form class="checkin-form" id="person-form" data-csrf-token="{{ csrf_token }}">
                 <label for="person-name">人員姓名</label>
                 <input id="person-name" name="name" type="text" list="registered-people" maxlength="80" autocomplete="off" placeholder="輸入新姓名或選擇現有人員" required>
@@ -100,9 +109,10 @@
                 </datalist>
                 <label for="person-pin">初始或新 PIN（6 至 12 位數字）</label>
                 <input id="person-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12" autocomplete="new-password" required>
-                <button class="camera-button primary-camera-button" type="submit">新增人員／重設 PIN</button>
+                <label class="consent-check"><input id="face-image-consent" name="face_image_consent" type="checkbox" required>本人已明確同意保存這張人臉照片。</label>
+                <button class="camera-button primary-camera-button" type="submit">倒數拍照並建立資料</button>
               </form>
-              <p class="checkin-status" id="person-status" role="status" aria-live="polite">PIN 只會以雜湊形式儲存。</p>
+              <p class="checkin-status" id="person-status" role="status" aria-live="polite">PIN 以雜湊儲存；每位人員僅保留一張照片，可由管理員刪除。</p>
             {% elif employee_authenticated %}
               <p class="form-description">已以個人 PIN 登入；本次打卡會記錄為 <strong>{{ employee_name }}</strong>。</p>
               <form class="checkin-form" id="checkin-form" data-csrf-token="{{ csrf_token }}">
@@ -143,7 +153,12 @@
               <div class="panel-header"><div><span class="section-label">REGISTERED PEOPLE</span><h2>已登記人員</h2></div><span class="member-count">{{ people|length }} 人</span></div>
               {% if people %}
                 <ul class="member-list" id="member-list">
-                  {% for person in people %}<li data-name="{{ person.name }}">{{ person.name }}{% if not person.has_pin %}（需重設 PIN）{% endif %}</li>{% endfor %}
+                  {% for person in people %}
+                    <li data-name="{{ person.name }}" data-person-id="{{ person.id }}" data-has-face-sample="{{ 'true' if person.has_face_sample else 'false' }}">
+                      <span>{{ person.name }}{% if not person.has_pin %}（需重設 PIN）{% endif %}<small class="face-sample-state">{{ "照片已建檔" if person.has_face_sample else "尚無照片" }}</small></span>
+                      <button class="camera-button delete-face-photo" type="button" data-delete-face-photo {% if not person.has_face_sample %}disabled{% endif %}>刪除照片</button>
+                    </li>
+                  {% endfor %}
                 </ul>
               {% else %}
                 <p class="empty-state" id="member-empty">尚無人員資料。由管理員新增姓名並設定初始 PIN。</p>
@@ -158,24 +173,6 @@
         </section>
 
         <section class="content-grid">
-          <article class="panel recognition-panel" id="recognition">
-            <div class="panel-header"><div><span class="section-label">LIVE FACE DETECTION</span><h2>即時人臉偵測</h2></div><span class="live-pill"><i></i> CAMERA</span></div>
-            <div class="camera-frame" id="camera-frame">
-              <div class="camera-grid"></div>
-              <div class="camera-placeholder" id="camera-placeholder">啟動攝影機後，按「偵測人臉」送出單張影像</div>
-              <video id="camera-video" autoplay muted playsinline aria-label="攝影機即時畫面"></video>
-              <canvas id="detection-canvas" hidden aria-hidden="true"></canvas>
-              <span class="camera-meta">僅將拍攝影像送至人臉偵測服務，不儲存照片</span>
-            </div>
-            <div class="camera-controls">
-              <button class="camera-button primary-camera-button" id="start-camera" type="button">啟動攝影機</button>
-              <button class="camera-button" id="detect-face" type="button" disabled>偵測人臉</button>
-              <button class="camera-button" id="stop-camera" type="button" disabled>停止攝影機</button>
-            </div>
-            <p class="camera-status" id="camera-status" role="status" aria-live="polite">攝影機尚未啟動。</p>
-            <pre class="detection-result" id="detection-result" aria-live="polite">偵測結果會顯示在這裡。</pre>
-          </article>
-
           <article class="panel activity-panel" id="records">
             <div class="panel-header"><div><span class="section-label">RECENT CHECK-INS</span><h2>最近打卡紀錄</h2></div></div>
             {% if not (admin_authenticated or employee_authenticated) %}
@@ -204,39 +201,19 @@
             <dl class="settings-list">
               <div><dt>打卡資料庫</dt><dd>{{ "可讀取" if database_ready else "無法讀取" }}</dd></div>
               <div><dt>個人 PIN 打卡</dt><dd>{{ "已設定" if checkin_configured else "尚未設定伺服器密碼與 Flask 金鑰" }}</dd></div>
-              <div><dt>人臉偵測 API 金鑰</dt><dd>{{ "已設定（不顯示金鑰）" if face_detection_configured else "尚未設定" }}</dd></div>
-              <div><dt>身份辨識</dt><dd>尚未設定服務；目前只偵測臉部位置</dd></div>
+              <div><dt>人臉照片資料</dt><dd>存於 SQLite；管理員可刪除</dd></div>
+              <div><dt>身份辨識</dt><dd>尚未接入；建檔照片不會執行身份比對</dd></div>
             </dl>
-            {% if admin_authenticated %}
-              <div class="settings-control">
-                <div>
-                  <strong>允許使用人臉偵測</strong>
-                  <p class="form-description">停用後，攝影機偵測請求會被拒絕；此開關不會變更或顯示 API 金鑰。</p>
-                </div>
-                <label class="settings-switch" for="face-detection-enabled">
-                  <input id="face-detection-enabled" type="checkbox" data-csrf-token="{{ csrf_token }}" {% if face_detection_enabled %}checked{% endif %} {% if not face_detection_configured %}disabled{% endif %}>
-                  <span>{{ "未設定 API 金鑰" if not face_detection_configured else ("啟用中" if face_detection_enabled else "已停用") }}</span>
-                </label>
-              </div>
-              <p class="checkin-status" id="settings-status" role="status" aria-live="polite"></p>
-              {% if not face_detection_configured %}
-                <p class="form-description">API 金鑰由 GitHub Actions Secret <code>FACE_DETECT_API_KEY</code> 部署到伺服器。不要在網站輸入或分享金鑰。</p>
-              {% endif %}
-            {% else %}
-              <p class="form-description">服務密碼與 API 金鑰由 Azure App Service 環境變數管理，不會放在網站表單。管理員登入後可切換人臉偵測開關。</p>
-            {% endif %}
             {% if not checkin_configured %}
               <p class="form-description">啟用打卡需由 Azure 管理員設定 CHECKIN_ADMIN_PASSWORD 與 FLASK_SECRET_KEY，並重新啟動 App Service。</p>
             {% endif %}
-            <p class="form-description">身份辨識需要另選支援身份比對的服務，並在取得每位人員明確同意後登記；目前尚未啟用，也不會由人臉偵測結果推測身份。</p>
+            <p class="form-description">請先取得本人明確同意再建檔。照片會留存在伺服器資料庫，管理員可透過人員管理刪除；目前不會上傳至 FACE_DETECT_API_KEY 對應的偵測服務，也尚未啟用身份辨識。</p>
           </article>
         </section>
 
-        <footer><span>© 2024 FaceSense AI</span><span>打卡以個人 PIN 驗證；人臉偵測不會辨識姓名。</span></footer>
+        <footer><span>© 2024 FaceSense AI</span><span>打卡以個人 PIN 驗證；人臉照片僅供後續辨識建檔。</span></footer>
       </main>
     </div>
-    <script src="{{ url_for('static', filename='face-detect.js') }}" defer></script>
     <script src="{{ url_for('static', filename='checkin.js') }}" defer></script>
-    <script src="{{ url_for('static', filename='site-settings.js') }}" defer></script>
   </body>
 </html>

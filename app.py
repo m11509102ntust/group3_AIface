@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
-import requests
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 app = Flask(__name__)
@@ -24,12 +23,7 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("WEBSITE_SITE_NAME"))
 
-FACE_DETECT_URL = "https://api-face-detect.knowlez.com/v1/face/detect"
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
-FACE_DETECT_RATE_LIMIT = 10
-FACE_DETECT_RATE_WINDOW = 60
-_face_detect_requests = defaultdict(deque)
-_face_detect_rate_lock = threading.Lock()
 PIN_LOGIN_MAX_ATTEMPTS = 5
 PIN_LOGIN_WINDOW = 15 * 60
 _pin_login_attempts = defaultdict(deque)
@@ -99,28 +93,20 @@ def _connect_db():
     )
     connection.execute(
         """
-        CREATE TABLE IF NOT EXISTS app_settings (
-            name TEXT PRIMARY KEY,
-            value TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS face_samples (
+            person_id INTEGER PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+            image BLOB NOT NULL,
+            content_type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            consented_at TEXT NOT NULL
         )
         """
-    )
-    connection.execute(
-        "INSERT OR IGNORE INTO app_settings (name, value) "
-        "VALUES ('face_detection_enabled', 'true')"
     )
     connection.execute(
         'CREATE INDEX IF NOT EXISTS idx_mytable_checkin_time ON mytable("打卡時間")'
     )
     connection.commit()
     return connection
-
-
-def _face_detection_enabled(connection):
-    setting = connection.execute(
-        "SELECT value FROM app_settings WHERE name = 'face_detection_enabled'"
-    ).fetchone()
-    return setting is None or setting["value"] == "true"
 
 
 def _csrf_token():
@@ -216,22 +202,6 @@ def _employee_required(view):
     return wrapped_view
 
 
-def _allow_face_detection(client_ip):
-    now = time.monotonic()
-    with _face_detect_rate_lock:
-        for ip, timestamps in list(_face_detect_requests.items()):
-            while timestamps and now - timestamps[0] >= FACE_DETECT_RATE_WINDOW:
-                timestamps.popleft()
-            if not timestamps:
-                del _face_detect_requests[ip]
-
-        timestamps = _face_detect_requests[client_ip]
-        if len(timestamps) >= FACE_DETECT_RATE_LIMIT:
-            return False
-        timestamps.append(now)
-        return True
-
-
 @app.get("/")
 def index():
     checkin_password_configured = bool(
@@ -239,8 +209,6 @@ def index():
     )
     flask_secret_configured = bool(app.secret_key)
     checkin_configured = checkin_password_configured and flask_secret_configured
-    face_detection_configured = bool(os.getenv("FACE_DETECT_API_KEY", "").strip())
-    face_detection_enabled = True
     admin_authenticated = bool(
         checkin_configured and session.get("checkin_admin_authenticated")
     )
@@ -256,12 +224,13 @@ def index():
     try:
         with closing(_connect_db()) as connection:
             database_ready = True
-            face_detection_enabled = _face_detection_enabled(connection)
             if admin_authenticated:
                 people = [
                     dict(row)
                     for row in connection.execute(
-                        "SELECT name, pin_hash IS NOT NULL AS has_pin "
+                        "SELECT id, name, pin_hash IS NOT NULL AS has_pin, "
+                        "EXISTS (SELECT 1 FROM face_samples "
+                        "WHERE face_samples.person_id = people.id) AS has_face_sample "
                         "FROM people ORDER BY name COLLATE NOCASE"
                     )
                 ]
@@ -327,8 +296,6 @@ def index():
 
     return render_template(
         "index.html",
-        face_detection_configured=face_detection_configured,
-        face_detection_enabled=face_detection_enabled,
         checkin_configured=checkin_configured,
         checkin_password_configured=checkin_password_configured,
         flask_secret_configured=flask_secret_configured,
@@ -440,6 +407,29 @@ def register_person():
     if not isinstance(pin, str) or not PIN_PATTERN.fullmatch(pin):
         return jsonify(error="PIN 必須為 6 至 12 位數字。"), 400
 
+    image_base64 = payload.get("face_image_base64")
+    image_bytes = None
+    content_type = None
+    if "face_image_base64" in payload:
+        if not isinstance(image_base64, str) or not image_base64:
+            return jsonify(error="請提供有效的人臉照片。"), 400
+        if len(image_base64) > ((MAX_IMAGE_BYTES + 2) // 3) * 4:
+            return jsonify(error="照片大小不可超過 5 MB。"), 413
+        try:
+            image_bytes = base64.b64decode(image_base64, validate=True)
+        except (binascii.Error, ValueError):
+            return jsonify(error="照片必須是有效的 Base64 編碼。"), 400
+        if len(image_bytes) > MAX_IMAGE_BYTES:
+            return jsonify(error="照片大小不可超過 5 MB。"), 413
+        if image_bytes.startswith(b"\xff\xd8\xff"):
+            content_type = "image/jpeg"
+        elif image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            content_type = "image/png"
+        else:
+            return jsonify(error="照片格式只支援 JPEG 或 PNG。"), 400
+        if payload.get("face_image_consent") is not True:
+            return jsonify(error="儲存人臉照片前必須確認已取得本人明確同意。"), 400
+
     confirm_new_person = payload.get("confirm_new_person") is True
     confirm_pin_reset = payload.get("confirm_pin_reset") is True
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
@@ -469,25 +459,71 @@ def register_person():
                 ), 409
 
             if person is None:
-                connection.execute(
+                cursor = connection.execute(
                     "INSERT INTO people (name, pin_salt, pin_hash, created_at) "
                     "VALUES (?, ?, ?, ?)",
                     (name, salt, pin_hash, created_at),
                 )
+                person_id = cursor.lastrowid
                 result_status = 201
             else:
                 name = person["name"]
+                person_id = person["id"]
                 connection.execute(
                     "UPDATE people SET pin_salt = ?, pin_hash = ? WHERE id = ?",
                     (salt, pin_hash, person["id"]),
                 )
                 result_status = 200
+            if image_bytes is not None:
+                connection.execute(
+                    "INSERT INTO face_samples "
+                    "(person_id, image, content_type, created_at, consented_at) "
+                    "VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(person_id) DO UPDATE SET "
+                    "image = excluded.image, content_type = excluded.content_type, "
+                    "created_at = excluded.created_at, "
+                    "consented_at = excluded.consented_at",
+                    (
+                        person_id,
+                        image_bytes,
+                        content_type,
+                        created_at,
+                        created_at,
+                    ),
+                )
             connection.commit()
     except sqlite3.Error:
         app.logger.exception("Could not register person or update PIN")
         return jsonify(error="人員資料儲存失敗，請稍後再試。"), 500
 
-    return jsonify(name=name), result_status
+    return (
+        jsonify(
+            name=name,
+            person_id=person_id,
+            has_face_sample=image_bytes is not None,
+        ),
+        result_status,
+    )
+
+
+@app.delete("/api/people/<int:person_id>/face-photo")
+@_admin_required
+def delete_face_photo(person_id):
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+
+    try:
+        with closing(_connect_db()) as connection:
+            cursor = connection.execute(
+                "DELETE FROM face_samples WHERE person_id = ?", (person_id,)
+            )
+            deleted = cursor.rowcount > 0
+            connection.commit()
+    except sqlite3.Error:
+        app.logger.exception("Could not delete SQLite face photo")
+        return jsonify(error="人臉照片刪除失敗，請稍後再試。"), 500
+
+    return jsonify(deleted=deleted)
 
 
 @app.post("/api/checkins")
@@ -527,104 +563,6 @@ def create_checkin():
         return jsonify(error="打卡資料儲存失敗，請稍後再試。"), 500
 
     return jsonify(name=name, checkin_time=checked_at), 201
-
-
-@app.post("/api/settings/face-detection")
-@_admin_required
-def update_face_detection_setting():
-    if not _csrf_is_valid():
-        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
-    if not os.getenv("FACE_DETECT_API_KEY", "").strip():
-        return jsonify(error="尚未設定人臉偵測 API 金鑰，無法啟用此功能。"), 409
-
-    payload = request.get_json(silent=True)
-    enabled = payload.get("enabled") if isinstance(payload, dict) else None
-    if not isinstance(enabled, bool):
-        return jsonify(error="設定值必須是布林值。"), 400
-
-    try:
-        with closing(_connect_db()) as connection:
-            connection.execute(
-                "UPDATE app_settings SET value = ? "
-                "WHERE name = 'face_detection_enabled'",
-                ("true" if enabled else "false",),
-            )
-            connection.commit()
-    except sqlite3.Error:
-        app.logger.exception("Could not update face detection setting")
-        return jsonify(error="系統設定儲存失敗，請稍後再試。"), 500
-
-    return jsonify(enabled=enabled)
-
-
-@app.post("/api/face/detect")
-def detect_face():
-    if not _allow_face_detection(request.remote_addr or "unknown"):
-        return jsonify(error="偵測次數過多，請稍後再試。"), 429
-
-    try:
-        with closing(_connect_db()) as connection:
-            if not _face_detection_enabled(connection):
-                return jsonify(error="人臉偵測功能目前由管理員停用。"), 503
-    except sqlite3.Error:
-        app.logger.exception("Could not load face detection setting")
-        return jsonify(error="目前無法讀取人臉偵測設定。"), 503
-
-    api_key = os.getenv("FACE_DETECT_API_KEY", "").strip()
-    if not api_key:
-        return jsonify(error="人臉偵測服務尚未設定 API 金鑰。"), 503
-
-    payload = request.get_json(silent=True)
-    image_base64 = payload.get("image_base64") if isinstance(payload, dict) else None
-    if not isinstance(image_base64, str) or not image_base64:
-        return jsonify(error="請提供 Base64 格式的 image_base64。"), 400
-
-    if len(image_base64) > ((MAX_IMAGE_BYTES + 2) // 3) * 4:
-        return jsonify(error="圖片大小不可超過 5 MB。"), 413
-
-    try:
-        image_bytes = base64.b64decode(image_base64, validate=True)
-    except (binascii.Error, ValueError):
-        return jsonify(error="圖片必須是有效的 Base64 編碼。"), 400
-
-    if len(image_bytes) > MAX_IMAGE_BYTES:
-        return jsonify(error="圖片大小不可超過 5 MB。"), 413
-    if not (
-        image_bytes.startswith(b"\xff\xd8\xff")
-        or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
-    ):
-        return jsonify(error="圖片格式只支援 JPEG 或 PNG。"), 400
-
-    try:
-        response = requests.post(
-            FACE_DETECT_URL,
-            headers={"x-api-key": api_key},
-            json={"image_base64": image_base64},
-            timeout=(5, 30),
-            allow_redirects=False,
-        )
-    except requests.Timeout:
-        app.logger.warning("Face detection provider timed out")
-        return jsonify(error="人臉偵測服務逾時，請稍後重試。"), 504
-    except requests.RequestException as exc:
-        app.logger.warning(
-            "Face detection provider request failed: %s", type(exc).__name__
-        )
-        return jsonify(error="目前無法連線到人臉偵測服務。"), 502
-
-    if response.status_code not in (200, 201):
-        app.logger.warning(
-            "Face detection provider returned HTTP %s", response.status_code
-        )
-        return jsonify(error="人臉偵測服務無法處理這張圖片。"), 502
-
-    try:
-        result = response.json()
-    except ValueError:
-        app.logger.warning("Face detection provider returned invalid JSON")
-        return jsonify(error="人臉偵測服務回傳了無效資料。"), 502
-
-    return jsonify(result)
 
 
 @app.errorhandler(413)
