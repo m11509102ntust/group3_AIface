@@ -90,13 +90,19 @@ jobs:
         shell: pwsh
         env:
           FLASK_SECRET_KEY: ${{ secrets.FLASK_SECRET_KEY }}
+          FACE_DETECT_API_KEY: ${{ secrets.FACE_DETECT_API_KEY }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:FLASK_SECRET_KEY)) {
             throw 'FLASK_SECRET_KEY repository secret is not configured'
           }
+          if ([string]::IsNullOrWhiteSpace($env:FACE_DETECT_API_KEY)) {
+            throw 'FACE_DETECT_API_KEY repository secret is not configured'
+          }
           az webapp config appsettings set `
             --resource-group $env:AZURE_RESOURCE_GROUP `
             --name $env:AZURE_WEBAPP_NAME `
-            --settings "FLASK_SECRET_KEY=$env:FLASK_SECRET_KEY" `
+            --settings `
+              "FLASK_SECRET_KEY=$env:FLASK_SECRET_KEY" `
+              "FACE_DETECT_API_KEY=$env:FACE_DETECT_API_KEY" `
             --output none
-          if ($LASTEXITCODE -ne 0) { throw 'Flask secret configuration failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Application secret configuration failed' }

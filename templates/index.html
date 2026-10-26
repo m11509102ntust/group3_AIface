@@ -89,7 +89,7 @@
           <article class="panel">
             <div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>人員打卡</h2></div></div>
             {% if not checkin_configured %}
-              <p class="notice error-notice">打卡登入尚未設定。請管理員在伺服器環境變數設定 CHECKIN_ADMIN_PASSWORD 和 FLASK_SECRET_KEY。</p>
+              <p class="notice error-notice">打卡登入尚未設定。請管理員在伺服器環境變數設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 和 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}。</p>
             {% elif admin_authenticated %}
               <p class="form-description">管理員可新增人員，或確認後重設既有人員的 PIN。人員必須以自己的姓名與 PIN 登入打卡。</p>
               <form class="checkin-form" id="person-form" data-csrf-token="{{ csrf_token }}">
@@ -220,7 +220,7 @@
               </div>
               <p class="checkin-status" id="settings-status" role="status" aria-live="polite"></p>
               {% if not face_detection_configured %}
-                <p class="form-description">API 金鑰請由管理員在 Azure Portal → App Service → Settings → Environment variables 設定 FACE_DETECT_API_KEY，再重新啟動服務。不要在網站輸入或分享金鑰。</p>
+                <p class="form-description">API 金鑰由 GitHub Actions Secret <code>FACE_DETECT_API_KEY</code> 部署到伺服器。不要在網站輸入或分享金鑰。</p>
               {% endif %}
             {% else %}
               <p class="form-description">服務密碼與 API 金鑰由 Azure App Service 環境變數管理，不會放在網站表單。管理員登入後可切換人臉偵測開關。</p>

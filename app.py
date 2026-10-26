@@ -234,7 +234,11 @@ def _allow_face_detection(client_ip):
 
 @app.get("/")
 def index():
-    checkin_configured = _checkin_settings_ready()
+    checkin_password_configured = bool(
+        os.getenv("CHECKIN_ADMIN_PASSWORD", "").strip()
+    )
+    flask_secret_configured = bool(app.secret_key)
+    checkin_configured = checkin_password_configured and flask_secret_configured
     face_detection_configured = bool(os.getenv("FACE_DETECT_API_KEY", "").strip())
     face_detection_enabled = True
     admin_authenticated = bool(
@@ -326,6 +330,8 @@ def index():
         face_detection_configured=face_detection_configured,
         face_detection_enabled=face_detection_enabled,
         checkin_configured=checkin_configured,
+        checkin_password_configured=checkin_password_configured,
+        flask_secret_configured=flask_secret_configured,
         database_ready=database_ready,
         admin_authenticated=admin_authenticated,
         employee_authenticated=employee_authenticated,
