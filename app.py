@@ -14,7 +14,10 @@ from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
+from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
+
+load_dotenv(Path(__file__).resolve().with_name(".env"), override=False)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 7 * 1024 * 1024

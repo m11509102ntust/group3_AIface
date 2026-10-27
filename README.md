@@ -19,32 +19,33 @@ python app.py
 
 接著開啟 http://127.0.0.1:5000/ 。若 PowerShell 不允許啟用虛擬環境，也可以使用 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` 和 `.\.venv\Scripts\python.exe app.py`。
 
+第一次啟動前，請在專案根目錄複製範例設定並用記事本填入自己的密碼與秘密金鑰：
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+`.env` 已加入 Git 忽略清單，不要提交或分享此檔案。`CHECKIN_ADMIN_PASSWORD` 是管理員登入密碼；個人 PIN 則由每位人員建檔時自行設定，系統只會將 PIN 雜湊存進資料庫，無須在 `.env` 設定。
+
 執行測試：`python -m unittest discover -s tests`
 
 ##正式站: https://ntustwebtest18.azurewebsites.net/
 
 ## 打卡登入與 SQLite
 
-打卡頁面提供個人打卡登入及管理員人員管理。設定以下伺服器環境變數後，重新啟動應用程式：
+本機打卡頁面提供個人打卡登入及管理員人員管理。應用程式啟動時會從專案根目錄 `.env` 載入設定；作業系統已設定的環境變數優先於 `.env`：
 
-- `CHECKIN_ADMIN_PASSWORD`：設定強且獨有的管理員密碼。管理員可核准或拒絕建檔申請、管理名冊及刪除照片；此密碼不會用於一般人員打卡。
+- `CHECKIN_ADMIN_PASSWORD`：強且獨有的管理員密碼。知道此密碼的人可登入管理員頁面，核准或拒絕建檔申請、管理名冊及刪除照片；此密碼不會用於一般人員打卡。
 - `FLASK_SECRET_KEY`：Flask 簽署登入 session 的隨機秘密；請使用高熵值，勿重複使用 API key 或提交至 Git。
 - `CHECKIN_DB_PATH`（選用）：SQLite 檔案的完整路徑。未設定時，本機使用 Flask `instance` 資料夾；Azure Windows App Service 使用 `D:\home\data\checkins.sqlite3`。
 
 本人提交建檔申請後，申請會先進入待審狀態；此時尚未建立可登入的人員。管理員登入後可檢視照片及申請姓名，再選擇核准或拒絕。核准時姓名、PIN 雜湊與照片會一起建立；拒絕時待審資料會刪除。人員以已核准的姓名與 PIN 登入後，打卡紀錄由登入的 person ID 決定，不能從瀏覽器指定其他姓名。個人 PIN 依姓名、管理員登入依管理員帳號，皆限制每個程序 15 分鐘內最多 5 次嘗試；程序重啟或多個執行個體不會共用計數。員工若看見「姓名或 PIN 不正確」，請確認申請是否已由管理員核准。
 
-可使用 Python 產生秘密值（請在自己的終端機執行，不要將輸出貼到聊天或提交到儲存庫）：
+產生 `FLASK_SECRET_KEY` 的方式（請在自己的終端機執行，將輸出貼入本機 `.env`，不要貼到聊天或提交至儲存庫）：
 
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-本機 PowerShell 設定範例：
-
-```powershell
-$env:CHECKIN_ADMIN_PASSWORD = "自行設定的管理員密碼"
-$env:FLASK_SECRET_KEY = "自行產生的隨機秘密"
-python app.py
 ```
 
 資料庫會建立 `people` 人員名冊（含個人 PIN 雜湊）、`enrollment_requests` 待審申請表、`face_samples` 人臉照片表，以及 `mytable` 打卡資料表（包含 `姓名`、`打卡時間` 欄位）。每筆核准與打卡均以資料庫交易記錄。時間以 UTC ISO-8601 格式儲存，頁面依瀏覽器時區顯示。Azure 預設路徑位於持久化的 `D:\home`，不要將資料庫指定到部署目錄；若覆寫 `CHECKIN_DB_PATH`，仍須選用 Azure 持久資料目錄並自行安排備份。
@@ -53,7 +54,7 @@ python app.py
 
 身份辨識目前未實作。既有 `FACE_DETECT_API_KEY` 對應的是臉部位置偵測服務，不支援此應用所需的人員照片建檔或身份比對；本程式不再呼叫該服務。要啟用辨識，需另行選定支援身份比對的服務，並設計資料保存與刪除流程。
 
-Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHECKIN_ADMIN_PASSWORD`、`FLASK_SECRET_KEY`，可選擇設定 `CHECKIN_DB_PATH` 為 `D:\home\data\checkins.sqlite3`。儲存設定後確認應用程式已重新啟動。這些設定是 Azure App Service 設定，不是 GitHub Actions secrets，也不應寫入 workflow 或程式碼。
+本機 `.env` 僅供本機程式載入，部署流程不會打包 `.env`，GitHub Actions 也無法讀取你電腦上的本機檔案。若要讓 Azure 正式網站也能使用管理員密碼，請在 GitHub 儲存庫 **Settings → Secrets and variables → Actions → New repository secret** 新增 `CHECKIN_ADMIN_PASSWORD`，值設為與本機 `.env` 相同的密碼。部署 workflow 會透過 GitHub Actions Secret 自動更新 Azure App Service 設定；不必手動進 Azure Portal 設定，也不要將 `.env` 或密碼提交至 Git。知道該密碼的人可在網站登入管理員並管理人員。
 
 ## 人臉照片建檔與管理員審核
 
@@ -72,5 +73,8 @@ Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHEC
 在 GitHub 儲存庫 **Settings → Secrets and variables → Actions** 確認：
 
 - Repository secret `AZURE_CREDENTIALS`：Azure 服務主體的 `clientId`、`clientSecret`、`subscriptionId`、`tenantId` 組成的 JSON。此 Secret 已設定，不要把內容寫進程式碼。
+- Repository secret `CHECKIN_ADMIN_PASSWORD`：與本機 `.env` 相同的管理員密碼；部署 workflow 會將其套用至 Azure App Service，不需在 Azure Portal 手動設定。
+- Repository secret `FLASK_SECRET_KEY`：Flask session 簽署金鑰。
+- Repository secret `FACE_DETECT_API_KEY`：部署 workflow 所需的既有 API 金鑰。
 
 請確認該服務主體對指定的 Web App 具有部署權限（例如該站點的 **Website Contributor**）。推送符合上述條件的 `main` 分支異動，或從 GitHub Actions 手動執行工作流程即可部署。

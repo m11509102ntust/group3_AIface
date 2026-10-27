@@ -86,12 +86,16 @@ jobs:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           package: dist
 
-      - name: Configure Flask secret
+      - name: Configure application secrets
         shell: pwsh
         env:
+          CHECKIN_ADMIN_PASSWORD: ${{ secrets.CHECKIN_ADMIN_PASSWORD }}
           FLASK_SECRET_KEY: ${{ secrets.FLASK_SECRET_KEY }}
           FACE_DETECT_API_KEY: ${{ secrets.FACE_DETECT_API_KEY }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:CHECKIN_ADMIN_PASSWORD)) {
+            throw 'CHECKIN_ADMIN_PASSWORD repository secret is not configured'
+          }
           if ([string]::IsNullOrWhiteSpace($env:FLASK_SECRET_KEY)) {
             throw 'FLASK_SECRET_KEY repository secret is not configured'
           }
@@ -102,6 +106,7 @@ jobs:
             --resource-group $env:AZURE_RESOURCE_GROUP `
             --name $env:AZURE_WEBAPP_NAME `
             --settings `
+              "CHECKIN_ADMIN_PASSWORD=$env:CHECKIN_ADMIN_PASSWORD" `
               "FLASK_SECRET_KEY=$env:FLASK_SECRET_KEY" `
               "FACE_DETECT_API_KEY=$env:FACE_DETECT_API_KEY" `
             --output none

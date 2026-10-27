@@ -85,7 +85,7 @@
           <article class="panel">
             <div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>人員打卡</h2></div></div>
             {% if not checkin_configured %}
-              <p class="notice error-notice">打卡登入尚未設定。請管理員在伺服器環境變數設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 和 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}。</p>
+              <p class="notice error-notice">打卡登入尚未設定。若在本機執行，請在專案根目錄的 <code>.env</code> 設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 和 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}。本機 .env 不會套用到 Azure。</p>
             {% elif admin_authenticated %}
               <p class="form-description">建檔申請由本人先提交，管理員核准後才會新增至打卡名冊。</p>
             {% elif employee_authenticated %}
@@ -127,7 +127,7 @@
             <div class="panel-header"><div><span class="section-label">FACE ENROLLMENT</span><h2>先拍照，再提交建檔</h2></div></div>
             <p class="form-description">先拍攝並確認照片，再填姓名與個人 PIN。申請待管理員核准前，不會加入打卡名冊。</p>
             {% if not checkin_configured %}
-              <p class="notice error-notice">管理員審核尚未啟用。請在 Azure 設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 與 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}，再重新啟動 App Service，才能提交申請及核准。</p>
+              <p class="notice error-notice">管理員審核尚未啟用。若在本機執行，請在專案根目錄的 <code>.env</code> 設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 與 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}，再重新啟動程式。本機 .env 不會套用到 Azure。</p>
             {% endif %}
             <div class="camera-frame enrollment-camera-frame" id="enrollment-camera-frame">
               <div class="camera-grid"></div>
@@ -237,7 +237,7 @@
               <div><dt>身份辨識</dt><dd>尚未接入；建檔照片不會執行身份比對</dd></div>
             </dl>
             {% if not checkin_configured %}
-              <p class="form-description">啟用打卡需由 Azure 管理員設定 CHECKIN_ADMIN_PASSWORD 與 FLASK_SECRET_KEY，並重新啟動 App Service。</p>
+              <p class="form-description">本機執行時，請在專案根目錄的 .env 設定 CHECKIN_ADMIN_PASSWORD 與 FLASK_SECRET_KEY，並重新啟動程式。本機 .env 不會套用到 Azure。</p>
             {% endif %}
             <p class="form-description">提交前須取得本人明確同意；待審申請會保存在伺服器資料庫，管理員拒絕時即刪除，核准後可透過人員管理刪除照片。目前不會上傳至 FACE_DETECT_API_KEY 對應的偵測服務，也尚未啟用身份辨識。</p>
           </article>
