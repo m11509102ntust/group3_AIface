@@ -8,6 +8,7 @@ const enrollmentCanvas = document.getElementById("enrollment-canvas");
 const enrollmentFrame = document.getElementById("enrollment-camera-frame");
 const enrollmentStatus = document.getElementById("enrollment-status");
 const enrollmentCountdown = document.getElementById("enrollment-countdown");
+const enrollmentSubmitHint = document.getElementById("enrollment-submit-hint");
 const startEnrollmentCamera = document.getElementById("start-enrollment-camera");
 const captureEnrollmentPhoto = document.getElementById("capture-enrollment-photo");
 const stopEnrollmentCamera = document.getElementById("stop-enrollment-camera");
@@ -93,6 +94,7 @@ if (startEnrollmentCamera) {
     enrollmentPhotoPreview.removeAttribute("src");
     enrollmentFrame.classList.remove("photo-captured");
     personForm.querySelector("button[type='submit']").disabled = true;
+    updateEnrollmentSubmitButton();
     enrollmentStatus.textContent = "正在等待攝影機權限…";
     try {
       enrollmentStream = await navigator.mediaDevices.getUserMedia({
@@ -117,16 +119,39 @@ if (startEnrollmentCamera) {
 
 function updateEnrollmentSubmitButton() {
   const submitButton = personForm?.querySelector("button[type='submit']");
-  if (submitButton) {
-    submitButton.disabled =
-      !enrollmentEnabled ||
-      !capturedFaceImageBase64 ||
-      !personForm.checkValidity();
+  if (!submitButton || !personForm) {
+    return;
+  }
+
+  const missingRequirements = [];
+  if (!enrollmentEnabled) {
+    missingRequirements.push("管理員尚未完成打卡系統設定");
+  } else {
+    if (!capturedFaceImageBase64) {
+      missingRequirements.push("啟動攝影機並完成倒數拍照");
+    }
+    if (!personForm.elements.namedItem("name").validity.valid) {
+      missingRequirements.push("填寫人員姓名");
+    }
+    if (!personForm.elements.namedItem("pin").validity.valid) {
+      missingRequirements.push("輸入 6 至 12 位數字 PIN");
+    }
+    if (!document.getElementById("face-image-consent").checked) {
+      missingRequirements.push("勾選本人明確同意");
+    }
+  }
+
+  submitButton.disabled = missingRequirements.length > 0;
+  if (enrollmentSubmitHint) {
+    enrollmentSubmitHint.textContent = missingRequirements.length
+      ? `提交前還需：${missingRequirements.join("、")}。`
+      : "資料已完成，現在可以提交管理員審核。";
   }
 }
 
 personForm?.addEventListener("input", updateEnrollmentSubmitButton);
 personForm?.addEventListener("change", updateEnrollmentSubmitButton);
+updateEnrollmentSubmitButton();
 
 stopEnrollmentCamera?.addEventListener("click", () => {
   stopEnrollmentStream();

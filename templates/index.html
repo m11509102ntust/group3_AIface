@@ -152,6 +152,7 @@
               <label class="consent-check"><input id="face-image-consent" name="face_image_consent" type="checkbox" required {% if not checkin_configured %}disabled{% endif %}>本人已明確同意提交並保存這張人臉照片。</label>
               <button class="camera-button primary-camera-button" type="submit" disabled>提交管理員審核</button>
             </form>
+            <p class="form-description" id="enrollment-submit-hint" role="status" aria-live="polite">提交前需完成拍照、填寫姓名與 6 至 12 位數字 PIN，並勾選本人同意。</p>
             <p class="checkin-status" id="person-status" role="status" aria-live="polite">照片只暫存在目前瀏覽器；提交後等待管理員確認，拒絕申請會刪除待審資料。</p>
           </article>
         </section>
