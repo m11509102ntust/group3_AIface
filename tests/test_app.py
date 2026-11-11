@@ -364,6 +364,46 @@ class FaceSenseAppTests(unittest.TestCase):
         self.assertEqual(row[0], "王小明")
         self.assertTrue(row[1].endswith("Z"))
 
+    def test_registered_face_can_check_in_without_person_login(self):
+        self.assertEqual(self._login().status_code, 302)
+        self.assertEqual(self._register_person("王小明", "123456").status_code, 201)
+        csrf_token = self._csrf_token()
+        with patch.dict(
+            os.environ,
+            {
+                "AZURE_FACE_ENDPOINT": "https://face.example.com",
+                "AZURE_FACE_KEY": "test-key",
+            },
+        ), patch("app._face_matches", return_value=(True, None)):
+            response = self.client.post(
+                "/api/face-checkins",
+                json={
+                    "image_base64": base64.b64encode(
+                        b"\xff\xd8\xffcamera-image"
+                    ).decode("ascii")
+                },
+                headers={"X-CSRF-Token": csrf_token},
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json()["name"], "王小明")
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            row = connection.execute(
+                'SELECT "姓名" FROM mytable'
+            ).fetchone()
+        self.assertEqual(row[0], "王小明")
+
+    def test_face_check_in_requires_azure_configuration(self):
+        response = self.client.post(
+            "/api/face-checkins",
+            json={
+                "image_base64": base64.b64encode(b"\xff\xd8\xffcamera-image").decode(
+                    "ascii"
+                )
+            },
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+        self.assertEqual(response.status_code, 503)
+
     def test_existing_name_requires_confirmation_before_pin_reset(self):
         self.assertEqual(self._login().status_code, 302)
         csrf_token = self._csrf_token()

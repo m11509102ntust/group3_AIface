@@ -7,7 +7,7 @@
     <title>AI人臉辨識打卡系統測試</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   </head>
-  <body>
+  <body data-csrf-token="{{ csrf_token }}">
     <div class="app-shell">
       <aside class="sidebar">
         <a class="brand" href="{{ url_for('index') }}" aria-label="FaceSense 首頁">
@@ -85,14 +85,29 @@
           </article>
           <article class="stat-card">
             <div class="stat-heading"><span>身份辨識功能</span><span class="stat-icon orange">◎</span></div>
-            <strong class="service-stat">尚未接入</strong>
-            <small class="trend neutral">照片建檔不等於身份辨識</small>
+            <strong class="service-stat">{{ "已接入" if face_recognition_configured else "尚未設定" }}</strong>
+            <small class="trend neutral">{{ "Azure Face 辨識打卡" if face_recognition_configured else "照片建檔不等於身份辨識；請設定 Azure Face" }}</small>
           </article>
         </section>
 
         <section class="checkin-grid" id="checkin">
           <article class="panel">
             <div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>人員打卡</h2></div></div>
+            {% if face_recognition_configured and not admin_authenticated %}
+              <p class="form-description">已核准並建立人臉名冊的人員，可直接拍攝辨識打卡，不需再次提交申請或等待審核。</p>
+              <div class="camera-frame" id="checkin-camera-frame">
+                <div class="camera-grid"></div>
+                <div class="camera-placeholder" id="checkin-camera-placeholder">啟動攝影機後進行人臉打卡</div>
+                <video id="checkin-video" autoplay muted playsinline aria-label="人臉打卡攝影機即時畫面"></video>
+                <canvas id="checkin-canvas" hidden aria-hidden="true"></canvas>
+              </div>
+              <div class="camera-controls">
+                <button class="camera-button" id="start-checkin-camera" type="button">啟動人臉打卡</button>
+                <button class="camera-button" id="capture-checkin-photo" type="button" disabled>拍攝並辨識</button>
+                <button class="camera-button" id="stop-checkin-camera" type="button" disabled>停止攝影機</button>
+              </div>
+              <p class="camera-status" id="face-checkin-status" role="status" aria-live="polite">請先啟動攝影機。</p>
+            {% endif %}
             {% if not checkin_configured %}
               <p class="notice error-notice">打卡登入尚未設定。若在本機執行，請在專案根目錄的 <code>.env</code> 設定 {% if not checkin_password_configured %}<code>CHECKIN_ADMIN_PASSWORD</code>{% endif %}{% if not checkin_password_configured and not flask_secret_configured %} 和 {% endif %}{% if not flask_secret_configured %}<code>FLASK_SECRET_KEY</code>{% endif %}。本機 .env 不會套用到 Azure。</p>
             {% elif admin_authenticated %}
@@ -252,7 +267,7 @@
               <div><dt>打卡資料庫</dt><dd>{{ "可讀取" if database_ready else "無法讀取" }}</dd></div>
               <div><dt>個人 PIN 打卡</dt><dd>{{ "已設定" if checkin_configured else "尚未設定伺服器密碼與 Flask 金鑰" }}</dd></div>
               <div><dt>人臉照片資料</dt><dd>存於 SQLite；管理員可刪除</dd></div>
-              <div><dt>身份辨識</dt><dd>尚未接入；建檔照片不會執行身份比對</dd></div>
+              <div><dt>身份辨識</dt><dd>{{ "Azure Face 已設定，可直接臉部打卡" if face_recognition_configured else "尚未設定 Azure Face" }}</dd></div>
             </dl>
             {% if not checkin_configured %}
               <p class="form-description">本機執行時，請在專案根目錄的 .env 設定 CHECKIN_ADMIN_PASSWORD 與 FLASK_SECRET_KEY，並重新啟動程式。本機 .env 不會套用到 Azure。</p>
@@ -261,7 +276,7 @@
           </article>
         </section>
 
-        <footer><span>© 2024 FaceSense AI</span><span>打卡以個人 PIN 驗證；人臉照片僅供後續辨識建檔。</span></footer>
+        <footer><span>© 2024 FaceSense AI</span><span>{{ "可使用 Azure Face 臉部辨識或個人 PIN 打卡。" if face_recognition_configured else "目前以個人 PIN 驗證打卡；設定 Azure Face 後可啟用臉部辨識。" }}</span></footer>
       </main>
     </div>
     <script src="{{ url_for('static', filename='checkin.js') }}" defer></script>

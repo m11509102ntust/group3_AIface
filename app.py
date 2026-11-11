@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
+from azure.ai.vision.face import FaceClient
+from azure.core.credentials import AzureKeyCredential
+from azure.core.exceptions import AzureError
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 
@@ -27,6 +30,7 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("WEBSITE_SITE_NAME"))
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+FACE_MATCH_THRESHOLD = 0.75
 PIN_LOGIN_MAX_ATTEMPTS = 5
 PIN_LOGIN_WINDOW = 15 * 60
 _pin_login_attempts = defaultdict(deque)
@@ -46,6 +50,54 @@ def _checkin_settings_ready():
     return bool(
         os.getenv("CHECKIN_ADMIN_PASSWORD", "").strip()
         and app.secret_key
+    )
+
+
+def _face_recognition_settings_ready():
+    return bool(
+        os.getenv("AZURE_FACE_ENDPOINT", "").strip()
+        and os.getenv("AZURE_FACE_KEY", "").strip()
+    )
+
+
+def _face_client():
+    return FaceClient(
+        endpoint=os.environ["AZURE_FACE_ENDPOINT"].strip(),
+        credential=AzureKeyCredential(os.environ["AZURE_FACE_KEY"].strip()),
+    )
+
+
+def _face_id(image_bytes):
+    detections = _face_client().detect(
+        image_bytes,
+        detection_model="detection_03",
+        recognition_model="recognition_04",
+        return_face_id=True,
+        face_id_time_to_live=60,
+    )
+    if len(detections) != 1 or not detections[0].face_id:
+        return None
+    return detections[0].face_id
+
+
+def _face_matches(query_image, registered_image):
+    query_face_id = _face_id(query_image)
+    if not query_face_id:
+        return False, "請確保畫面中只有一張清楚可見的人臉。"
+    registered_face_id = _face_id(registered_image)
+    if not registered_face_id:
+        return False, "已登記的人臉照片無法辨識，請由管理員重新建檔。"
+
+    verification = _face_client().verify_face_to_face(
+        face_id1=query_face_id,
+        face_id2=registered_face_id,
+    )
+    threshold = float(
+        os.getenv("AZURE_FACE_MATCH_THRESHOLD", FACE_MATCH_THRESHOLD)
+    )
+    return (
+        bool(verification.is_identical and verification.confidence >= threshold),
+        None,
     )
 
 
@@ -354,6 +406,7 @@ def index():
         enrollment_requests=enrollment_requests,
         checkins=checkins,
         database_error=database_error,
+        face_recognition_configured=_face_recognition_settings_ready(),
     )
 
 
@@ -760,6 +813,72 @@ def create_checkin():
         return jsonify(error="打卡資料儲存失敗，請稍後再試。"), 500
 
     return jsonify(name=name, checkin_time=checked_at), 201
+
+
+@app.post("/api/face-checkins")
+def create_face_checkin():
+    if not _checkin_settings_ready():
+        return jsonify(error="打卡登入尚未完成伺服器設定。"), 503
+    if not _face_recognition_settings_ready():
+        return jsonify(error="臉部辨識服務尚未完成伺服器設定。"), 503
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    image_bytes, _, image_error = _decode_face_image(payload.get("image_base64"))
+    if image_error:
+        return jsonify(error=image_error[0]), image_error[1]
+
+    try:
+        with closing(_connect_db()) as connection:
+            people = connection.execute(
+                "SELECT people.id, people.name, face_samples.image "
+                "FROM people JOIN face_samples ON face_samples.person_id = people.id"
+            ).fetchall()
+            if not people:
+                return jsonify(error="目前沒有可供辨識的已登記人員。"), 404
+
+            matches = []
+            for person in people:
+                matched, error = _face_matches(image_bytes, person["image"])
+                if error:
+                    return jsonify(error=error), 422
+                if matched:
+                    matches.append(person)
+
+            if len(matches) != 1:
+                return jsonify(
+                    error=(
+                        "無法確認唯一的人員，請重新拍攝正面照片。"
+                        if matches
+                        else "人臉辨識不相符，請重新拍攝或洽管理員。"
+                    )
+                ), 401
+
+            checked_at = (
+                datetime.now(timezone.utc)
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z")
+            )
+            person = matches[0]
+            connection.execute(
+                'INSERT INTO mytable (person_id, "姓名", "打卡時間") '
+                "VALUES (?, ?, ?)",
+                (person["id"], person["name"], checked_at),
+            )
+            connection.commit()
+    except AzureError:
+        app.logger.exception("Azure Face verification failed")
+        return jsonify(error="臉部辨識服務暫時無法使用，請稍後再試。"), 503
+    except (TypeError, ValueError):
+        app.logger.exception("Invalid Azure Face verification response")
+        return jsonify(error="臉部辨識服務回應格式錯誤，請稍後再試。"), 503
+    except sqlite3.Error:
+        app.logger.exception("Could not save face check-in")
+        return jsonify(error="打卡資料儲存失敗，請稍後再試。"), 500
+
+    return jsonify(name=person["name"], checkin_time=checked_at), 201
 
 
 @app.errorhandler(413)

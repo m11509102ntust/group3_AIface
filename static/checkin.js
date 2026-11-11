@@ -12,8 +12,15 @@ const enrollmentSubmitHint = document.getElementById("enrollment-submit-hint");
 const startEnrollmentCamera = document.getElementById("start-enrollment-camera");
 const stopEnrollmentCamera = document.getElementById("stop-enrollment-camera");
 const enrollmentEnabled = personForm?.dataset.enabled === "true";
+const checkinVideo = document.getElementById("checkin-video");
+const checkinCanvas = document.getElementById("checkin-canvas");
+const startCheckinCamera = document.getElementById("start-checkin-camera");
+const captureCheckinPhoto = document.getElementById("capture-checkin-photo");
+const stopCheckinCamera = document.getElementById("stop-checkin-camera");
+const faceCheckinStatus = document.getElementById("face-checkin-status");
 
 let enrollmentStream = null;
+let checkinStream = null;
 let capturedFaceImageBase64 = null;
 
 function displayLocalTimes() {
@@ -52,6 +59,93 @@ async function createCheckin(csrfToken) {
     body: JSON.stringify({}),
   });
 }
+
+function stopCheckinCameraStream() {
+  if (checkinStream) {
+    checkinStream.getTracks().forEach((track) => track.stop());
+    checkinStream = null;
+  }
+  if (checkinVideo) {
+    checkinVideo.srcObject = null;
+  }
+  startCheckinCamera && (startCheckinCamera.disabled = false);
+  captureCheckinPhoto && (captureCheckinPhoto.disabled = true);
+  stopCheckinCamera && (stopCheckinCamera.disabled = true);
+}
+
+startCheckinCamera?.addEventListener("click", async () => {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    faceCheckinStatus.textContent = "此瀏覽器不支援攝影機，請透過 HTTPS 開啟網站。";
+    return;
+  }
+  startCheckinCamera.disabled = true;
+  faceCheckinStatus.textContent = "正在等待攝影機權限…";
+  try {
+    checkinStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: "user" },
+    });
+    checkinVideo.srcObject = checkinStream;
+    await checkinVideo.play();
+    captureCheckinPhoto.disabled = false;
+    stopCheckinCamera.disabled = false;
+    faceCheckinStatus.textContent = "請看向攝影機後按下「拍攝並辨識」。";
+  } catch (error) {
+    stopCheckinCameraStream();
+    faceCheckinStatus.textContent =
+      error.name === "NotAllowedError"
+        ? "攝影機權限遭拒，請在瀏覽器設定中允許使用攝影機。"
+        : "無法啟動攝影機，請確認設備、權限及 HTTPS 連線。";
+  }
+});
+
+stopCheckinCamera?.addEventListener("click", () => {
+  stopCheckinCameraStream();
+  faceCheckinStatus.textContent = "攝影機已停止。";
+});
+
+captureCheckinPhoto?.addEventListener("click", async () => {
+  if (!checkinStream || !checkinVideo.videoWidth || !checkinVideo.videoHeight) {
+    faceCheckinStatus.textContent = "攝影機畫面尚未就緒，請稍後再試。";
+    return;
+  }
+  const scale = Math.min(
+    1,
+    1024 / Math.max(checkinVideo.videoWidth, checkinVideo.videoHeight),
+  );
+  checkinCanvas.width = Math.round(checkinVideo.videoWidth * scale);
+  checkinCanvas.height = Math.round(checkinVideo.videoHeight * scale);
+  checkinCanvas
+    .getContext("2d")
+    .drawImage(checkinVideo, 0, 0, checkinCanvas.width, checkinCanvas.height);
+  captureCheckinPhoto.disabled = true;
+  faceCheckinStatus.textContent = "正在辨識並記錄打卡…";
+  try {
+    const response = await fetch("/api/face-checkins", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": document.body.dataset.csrfToken || "",
+      },
+      body: JSON.stringify({
+        image_base64: checkinCanvas.toDataURL("image/jpeg", 0.85).split(",", 2)[1],
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "人臉打卡失敗，請稍後重試。");
+    }
+    addCheckinRow(result);
+    faceCheckinStatus.textContent = `${result.name} 已完成臉部辨識打卡。`;
+  } catch (error) {
+    faceCheckinStatus.textContent =
+      error instanceof TypeError
+        ? "無法連線至網站，請檢查網路後重試。"
+        : error.message;
+  } finally {
+    captureCheckinPhoto.disabled = false;
+  }
+});
 
 function stopEnrollmentStream() {
   if (enrollmentStream) {
@@ -368,5 +462,8 @@ document.getElementById("member-list")?.addEventListener("click", async (event) 
   }
 });
 
-window.addEventListener("pagehide", stopEnrollmentStream);
+window.addEventListener("pagehide", () => {
+  stopEnrollmentStream();
+  stopCheckinCameraStream();
+});
 displayLocalTimes();

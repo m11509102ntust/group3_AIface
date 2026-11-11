@@ -62,7 +62,7 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 管理員在「待審建檔申請」檢視人員姓名與照片後核准或拒絕。核准會將人員與照片一起新增至正式名冊；同名既有人員會被拒絕核准，避免覆寫帳號。拒絕會刪除待審資料。核准後管理員也可從「已登記人員」刪除照片。每張照片上限 5 MB。
 
-資料庫的待審申請與 `face_samples` 表保存照片二進位內容、MIME 類型、建立時間及同意確認時間。照片是敏感個人資料，請限制資料庫及備份存取，並依實際需求設定保留期間。現階段不建立臉部特徵、不執行身份比對；`FACE_DETECT_API_KEY` 只是既有位置偵測 API 金鑰，不能用於身份辨識，也不會被本流程呼叫。
+資料庫的待審申請與 `face_samples` 表保存照片二進位內容、MIME 類型、建立時間及同意確認時間。照片是敏感個人資料，請限制資料庫及備份存取，並依實際需求設定保留期間。Azure Face 會以目前照片與已核准名冊照片進行比對；金鑰只能放在環境變數或 Azure 設定，不可提交至 Git。
 
 ## 部署到 Azure Web App
 
@@ -76,5 +76,7 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 - Repository secret `CHECKIN_ADMIN_PASSWORD`：與本機 `.env` 相同的管理員密碼；部署 workflow 會將其套用至 Azure App Service，不需在 Azure Portal 手動設定。
 - Repository secret `FLASK_SECRET_KEY`：Flask session 簽署金鑰。
 - Repository secret `FACE_DETECT_API_KEY`：部署 workflow 所需的既有 API 金鑰。
+- Repository secret `AZURE_FACE_ENDPOINT`：Azure AI Face resource endpoint。
+- Repository secret `AZURE_FACE_KEY`：Azure AI Face resource key。
 
 請確認該服務主體對指定的 Web App 具有部署權限（例如該站點的 **Website Contributor**）。推送符合上述條件的 `main` 分支異動，或從 GitHub Actions 手動執行工作流程即可部署。

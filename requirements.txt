@@ -1,3 +1,4 @@
 Flask>=3.1,<4
+azure-ai-vision-face>=1.0.0b1,<2
 python-dotenv>=1.0,<2
 waitress>=3,<4
