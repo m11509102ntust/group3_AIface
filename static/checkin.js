@@ -10,7 +10,6 @@ const enrollmentStatus = document.getElementById("enrollment-status");
 const enrollmentCountdown = document.getElementById("enrollment-countdown");
 const enrollmentSubmitHint = document.getElementById("enrollment-submit-hint");
 const startEnrollmentCamera = document.getElementById("start-enrollment-camera");
-const captureEnrollmentPhoto = document.getElementById("capture-enrollment-photo");
 const stopEnrollmentCamera = document.getElementById("stop-enrollment-camera");
 const enrollmentEnabled = personForm?.dataset.enabled === "true";
 
@@ -69,9 +68,6 @@ function stopEnrollmentStream() {
   if (startEnrollmentCamera) {
     startEnrollmentCamera.disabled = !enrollmentEnabled;
   }
-  if (captureEnrollmentPhoto) {
-    captureEnrollmentPhoto.disabled = true;
-  }
   if (stopEnrollmentCamera) {
     stopEnrollmentCamera.disabled = true;
   }
@@ -105,14 +101,14 @@ if (startEnrollmentCamera) {
       await enrollmentVideo.play();
       enrollmentFrame.classList.add("camera-active");
       stopEnrollmentCamera.disabled = false;
-      captureEnrollmentPhoto.disabled = false;
-      enrollmentStatus.textContent = "攝影機已啟動；按下拍照後將倒數 5 秒。";
+      enrollmentStatus.textContent = "攝影機已啟動，將自動倒數 5 秒拍照。";
+      await captureAndPreviewFacePhoto();
     } catch (error) {
       stopEnrollmentStream();
       enrollmentStatus.textContent =
         error.name === "NotAllowedError"
           ? "攝影機權限遭拒，請在瀏覽器設定中允許使用攝影機。"
-          : "無法啟動攝影機，請確認設備、權限及 HTTPS 連線。";
+          : error.message || "無法啟動攝影機，請確認設備、權限及 HTTPS 連線。";
     }
   });
 }
@@ -193,27 +189,15 @@ async function captureFacePhoto() {
   return enrollmentCanvas.toDataURL("image/jpeg", 0.85).split(",", 2)[1];
 }
 
-captureEnrollmentPhoto?.addEventListener("click", async () => {
-  captureEnrollmentPhoto.disabled = true;
-  startEnrollmentCamera.disabled = true;
-  try {
-    capturedFaceImageBase64 = await captureFacePhoto();
-    enrollmentPhotoPreview.src = `data:image/jpeg;base64,${capturedFaceImageBase64}`;
-    enrollmentPhotoPreview.hidden = false;
-    enrollmentFrame.classList.add("photo-captured");
-    stopEnrollmentStream();
-    enrollmentStatus.textContent = "照片已拍攝並可預覽；確認後填寫資料提交。";
-    updateEnrollmentSubmitButton();
-  } catch (error) {
-    enrollmentCountdown.textContent = "";
-    enrollmentStatus.textContent = error.message;
-    if (enrollmentStream) {
-      captureEnrollmentPhoto.disabled = false;
-      stopEnrollmentCamera.disabled = false;
-      startEnrollmentCamera.disabled = true;
-    }
-  }
-});
+async function captureAndPreviewFacePhoto() {
+  capturedFaceImageBase64 = await captureFacePhoto();
+  enrollmentPhotoPreview.src = `data:image/jpeg;base64,${capturedFaceImageBase64}`;
+  enrollmentPhotoPreview.hidden = false;
+  enrollmentFrame.classList.add("photo-captured");
+  stopEnrollmentStream();
+  enrollmentStatus.textContent = "照片已拍攝並可預覽；確認後填寫資料提交。";
+  updateEnrollmentSubmitButton();
+}
 
 async function submitEnrollmentRequest(name, pin, faceImageBase64) {
   return fetch("/api/enrollment-requests", {

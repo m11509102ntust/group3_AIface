@@ -157,8 +157,7 @@
               <span class="camera-countdown" id="enrollment-countdown" aria-hidden="true"></span>
             </div>
             <div class="camera-controls">
-              <button class="camera-button" id="start-enrollment-camera" type="button" {% if not checkin_configured %}disabled{% endif %}>啟動攝影機／重新拍照</button>
-              <button class="camera-button" id="capture-enrollment-photo" type="button" disabled>倒數 5 秒拍照</button>
+              <button class="camera-button" id="start-enrollment-camera" type="button" {% if not checkin_configured %}disabled{% endif %}>啟動攝影機並倒數拍照</button>
               <button class="camera-button" id="stop-enrollment-camera" type="button" disabled>停止攝影機</button>
             </div>
             <p class="camera-status" id="enrollment-status" role="status" aria-live="polite">請先啟動攝影機。</p>
