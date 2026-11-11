@@ -80,3 +80,5 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 - Repository secret `AZURE_FACE_KEY`：Azure AI Face resource key。
 
 請確認該服務主體對指定的 Web App 具有部署權限（例如該站點的 **Website Contributor**）。推送符合上述條件的 `main` 分支異動，或從 GitHub Actions 手動執行工作流程即可部署。
+
+`AZURE_FACE_ENDPOINT` 與 `AZURE_FACE_KEY` 是選用設定。尚未建立 Azure AI Face 資源時，部署仍會完成，正式站會保留個人 PIN 打卡；兩個 secrets 都設定後重新部署，才會啟用臉部辨識打卡。
