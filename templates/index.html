@@ -33,7 +33,7 @@
           <div class="topbar-actions">
             <div class="profile" aria-label="目前登入狀態">
               <span class="avatar" aria-hidden="true">{{ employee_name[0] if employee_authenticated and employee_name else ("管" if admin_authenticated else "?") }}</span>
-              <span><strong>{{ employee_name if employee_authenticated else ("管理員" if admin_authenticated else "訪客") }}</strong><small>{{ "員工工作階段" if employee_authenticated else ("管理員工作階段" if admin_authenticated else "尚未授權") }}</small></span>
+              <span><strong>{{ employee_name if employee_authenticated else ("管理員" if admin_authenticated else "訪客") }}</strong><small>{{ "員工工作階段" if employee_authenticated else ("管理員工作階段" if admin_authenticated else "尚未登入（統計需授權）") }}</small></span>
             </div>
             {% if admin_authenticated or employee_authenticated %}
               <form class="topbar-logout-form" action="{{ url_for('logout') }}" method="post">
