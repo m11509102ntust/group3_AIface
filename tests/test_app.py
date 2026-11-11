@@ -605,5 +605,10 @@ class FaceSenseAppTests(unittest.TestCase):
         response = self.client.post("/", data={"unused": "data"})
         self.assertEqual(response.status_code, 405)
 
+    def test_health_endpoint_does_not_expose_private_data(self):
+        response = self.client.get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"status": "ok"})
+
 if __name__ == "__main__":
     unittest.main()

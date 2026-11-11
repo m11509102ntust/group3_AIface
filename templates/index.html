@@ -31,7 +31,16 @@
             <h1>AI人臉辨識打卡系統測試 <span>👋</span></h1>
           </div>
           <div class="topbar-actions">
-            <div class="profile"><span class="avatar">A</span><span><strong>{{ employee_name if employee_authenticated else "管理員" }}</strong><small>{{ "人員已登入" if employee_authenticated else ("管理員已登入" if admin_authenticated else "尚未登入") }}</small></span></div>
+            <div class="profile" aria-label="目前登入狀態">
+              <span class="avatar" aria-hidden="true">{{ employee_name[0] if employee_authenticated and employee_name else ("管" if admin_authenticated else "?") }}</span>
+              <span><strong>{{ employee_name if employee_authenticated else ("管理員" if admin_authenticated else "訪客") }}</strong><small>{{ "員工工作階段" if employee_authenticated else ("管理員工作階段" if admin_authenticated else "尚未授權") }}</small></span>
+            </div>
+            {% if admin_authenticated or employee_authenticated %}
+              <form class="topbar-logout-form" action="{{ url_for('logout') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button class="camera-button" type="submit">{{ "結束員工工作階段" if employee_authenticated else "結束管理員工作階段" }}</button>
+              </form>
+            {% endif %}
           </div>
         </header>
 
@@ -96,10 +105,14 @@
               <p class="checkin-status" id="checkin-status" role="status" aria-live="polite">打卡後只會記錄目前登入人員。</p>
               <form class="logout-form" action="{{ url_for('logout') }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button class="camera-button" type="submit">登出</button>
+                <button class="camera-button" type="submit">結束員工工作階段</button>
               </form>
             {% else %}
-              <p class="form-description">請使用已由管理員核准的姓名與個人 PIN 登入。尚未登記者可先提交建檔申請，核准後即可登入打卡。</p>
+              <div class="login-section">
+                <span class="section-label">EMPLOYEE CHECK-IN</span>
+                <h3>員工打卡登入</h3>
+                <p class="form-description">使用已由管理員核准的姓名與個人 PIN。登入後只可查看與新增自己的打卡資料。</p>
+              </div>
               {% if request.args.get('person_login_error') %}<p class="notice error-notice" role="alert">{% if request.args.get('person_login_error') == '2' %}嘗試次數過多，請 15 分鐘後再試。{% else %}姓名或 PIN 不正確；未登記者請洽管理員。{% endif %}</p>{% endif %}
               <form class="checkin-form login-form" action="{{ url_for('person_login') }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -107,16 +120,21 @@
                 <input id="person-login-name" name="name" type="text" maxlength="80" autocomplete="username" required>
                 <label for="person-login-pin">個人 PIN</label>
                 <input id="person-login-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12" autocomplete="current-password" required>
-                <button class="camera-button primary-camera-button" type="submit">登入並打卡</button>
+                <button class="camera-button primary-camera-button" type="submit">登入員工帳號</button>
               </form>
               <details class="admin-login">
-                <summary>管理員登入（人員管理）</summary>
+                <summary>切換至管理員登入（人員管理）</summary>
+                <div class="login-section">
+                  <span class="section-label">ADMIN MANAGEMENT</span>
+                  <h3>管理員管理登入</h3>
+                  <p class="form-description">僅管理員可審核建檔申請、管理名冊與刪除人臉照片。</p>
+                </div>
                 {% if request.args.get('admin_login_error') %}<p class="notice error-notice" role="alert">{% if request.args.get('admin_login_error') == '2' %}嘗試次數過多，請 15 分鐘後再試。{% else %}管理員密碼不正確，請重試。{% endif %}</p>{% endif %}
                 <form class="checkin-form login-form" action="{{ url_for('login') }}" method="post">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <label for="admin-password">管理員密碼</label>
                   <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
-                  <button class="camera-button" type="submit">登入管理員</button>
+                  <button class="camera-button" type="submit">登入管理員帳號</button>
                 </form>
               </details>
             {% endif %}
@@ -199,7 +217,7 @@
               {% endif %}
               <form class="logout-form" action="{{ url_for('logout') }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button class="camera-button" type="submit">登出管理員</button>
+                <button class="camera-button" type="submit">結束管理員工作階段</button>
               </form>
             </article>
           </section>

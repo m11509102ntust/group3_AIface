@@ -357,6 +357,11 @@ def index():
     )
 
 
+@app.get("/healthz")
+def healthz():
+    return jsonify(status="ok"), 200
+
+
 @app.post("/login")
 def login():
     if not _checkin_settings_ready():

@@ -66,7 +66,7 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 ## 部署到 Azure Web App
 
-`.github/workflows/deploy-azure.yml` 在 `main` 分支的應用程式、測試或 workflow 異動時執行，也可以從 GitHub Actions 手動觸發。流程會在 Windows runner 上執行測試、下載官方 Python 3.14.8 可嵌入版本，將 Python 與相依套件一起部署到 Azure Web App（由儲存庫變數 `AZURE_WEBAPP_NAME` 與 `AZURE_RESOURCE_GROUP` 指定）。站點透過 `web.config` 的 IIS HttpPlatformHandler 啟動 `serve.py`，以 Waitress 提供 Flask 服務。
+`.github/workflows/deploy-azure.yml` 在 `main` 分支的應用程式、測試或 workflow 異動時執行，也可以從 GitHub Actions 手動觸發。流程會在 Windows runner 上執行測試、下載官方 Python 3.14.8 可嵌入版本，先部署至 Azure Web App 的 staging slot，通過 `/healthz` smoke test 後再 swap 至 production，形成藍綠部署。站點名稱與資源群組由儲存庫變數 `AZURE_WEBAPP_NAME`、`AZURE_RESOURCE_GROUP` 指定；staging slot 可由 `AZURE_STAGING_SLOT` 指定，預設為 `staging`。站點透過 `web.config` 的 IIS HttpPlatformHandler 啟動 `serve.py`，以 Waitress 提供 Flask 服務。
 
 此方法使用**隨部署包提供的 Python**，不依賴 Windows App Service 內建 Python 執行環境；HttpPlatformHandler 必須在目標站點可用。部署時會確認目標是 Windows Web App。
 
