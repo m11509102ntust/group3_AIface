@@ -124,7 +124,7 @@ function updateEnrollmentSubmitButton() {
     missingRequirements.push("管理員尚未完成打卡系統設定");
   } else {
     if (!capturedFaceImageBase64) {
-      missingRequirements.push("啟動攝影機並完成倒數拍照");
+      missingRequirements.push("啟動攝影機並完成自動倒數拍照");
     }
     if (!personForm.elements.namedItem("name").validity.valid) {
       missingRequirements.push("填寫人員姓名");
