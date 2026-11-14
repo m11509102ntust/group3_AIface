@@ -15,7 +15,7 @@
           <a class="nav-item active" href="#dashboard"><span class="nav-icon">⌂</span>總覽</a>
           {% if admin_authenticated %}<a class="nav-item" href="#members"><span class="nav-icon">◎</span>人員／人臉建檔</a>{% endif %}
           <a class="nav-item" href="#checkin"><span class="nav-icon">▤</span>打卡紀錄</a>
-          <a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>系統設定</a>
+          {% if admin_authenticated %}<a class="nav-item" href="#settings"><span class="nav-icon">⚙</span>系統設定</a>{% endif %}
         </nav>
 
       </aside>
@@ -256,6 +256,7 @@
           </article>
         </section>
 
+        {% if admin_authenticated %}
         <section class="settings-section" id="settings">
           <article class="panel">
             <div class="panel-header"><div><span class="section-label">SYSTEM SETTINGS</span><h2>系統設定與服務狀態</h2></div></div>
@@ -271,6 +272,7 @@
             <p class="form-description">提交前須取得本人明確同意；待審申請會保存在伺服器資料庫，管理員拒絕時即刪除，核准後可透過人員管理刪除照片。目前不會上傳至 FACE_DETECT_API_KEY 對應的偵測服務，也尚未啟用身份辨識。</p>
           </article>
         </section>
+        {% endif %}
 
         <footer><span>© 2024 FaceSense AI</span><span>{{ "可使用 Azure Face 臉部辨識或個人 PIN 打卡。" if face_recognition_configured else "目前以個人 PIN 驗證打卡；設定 Azure Face 後可啟用臉部辨識。" }}</span></footer>
       </main>
