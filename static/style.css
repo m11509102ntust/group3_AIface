@@ -45,6 +45,9 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 .form-description { margin: 0 0 14px; }
 .checkin-form label { color: #31535a; font-weight: 600; }
 .checkin-controls { display: flex; gap: 9px; }
+.face-checkin-panel { margin-top: 20px; padding-top: 20px; border-top: 1px solid #edf1f2; }
+.face-checkin-panel[hidden] { display: none; }
+.face-checkin-panel .camera-frame { max-width: 720px; }
 .checkin-form input { min-width: 0; padding: 10px 12px; border: 1px solid #dce7e8; border-radius: 6px; color: #203b42; font: inherit; font-size: 12px; }
 .checkin-controls input { flex: 1; }
 .checkin-form input:focus { border-color: #1f8f82; outline: 2px solid #1f8f8225; }

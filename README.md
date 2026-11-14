@@ -51,7 +51,7 @@ python app.py
 
 總覽出勤統計由實際打卡資料計算。管理員可查看全體今日打卡筆數、今日不重複打卡人數及名冊人數；員工只會看到自己的打卡統計，未登入者不會看到出勤數字。人臉偵測啟用狀態儲存在 SQLite 的 `app_settings` 表。
 
-管理員登入後可在頁面「系統設定」開關人臉偵測。API 金鑰、管理員密碼及 Flask session 金鑰只從 Azure App Service 環境變數讀取，不會由網站表單收集。身份辨識目前未實作；需先選定支援身份比對的服務，設計人臉資料的明確同意、保存與刪除流程後才能啟用。
+管理員登入後可在頁面「系統設定」開關人臉偵測。API 金鑰、管理員密碼及 Flask session 金鑰只從 Azure App Service 環境變數讀取，不會由網站表單收集。POC 依 Azure Face 的 Person Group 流程建立 Person、加入 Persisted Face、啟動訓練，再使用 Detect 與 Identify 進行身分比對。Azure 儲存人臉特徵，正式上線前仍需補上明確同意、保存期限、刪除與稽核流程。
 
 Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHECKIN_ADMIN_PASSWORD`、`FLASK_SECRET_KEY`，可選擇設定 `CHECKIN_DB_PATH` 為 `D:\home\data\checkins.sqlite3`。儲存設定後確認應用程式已重新啟動。這些設定是 Azure App Service 設定，不是 GitHub Actions secrets，也不應寫入 workflow 或程式碼。
 
@@ -67,6 +67,18 @@ python app.py
 ```
 
 部署到 Azure 前，請在 Azure Portal 的 Web App → **Settings → Environment variables** 加入 `FACE_DETECT_API_KEY`，儲存後確認應用程式已重新啟動。任何曾貼到聊天、提交到 Git 或其他不受信任位置的金鑰都應先撤銷，再使用新金鑰。
+
+## Azure Face 人臉比對 POC
+
+在 Azure Face 資源建立後，設定以下伺服器環境變數。Endpoint 僅填資源網址，例如 `https://my-face-resource.cognitiveservices.azure.com`，不要把金鑰放在前端或提交到 Git。
+
+```powershell
+$env:AZURE_FACE_ENDPOINT = "https://你的-face-resource.cognitiveservices.azure.com"
+$env:AZURE_FACE_KEY = "Azure Face 金鑰"
+python app.py
+```
+
+管理員登入後，在「人員／人臉建檔」頁面先新增人員與 PIN，再用右側相機拍攝單人照片並儲存建檔。系統會建立或使用 `facesense-poc` Person Group，加入該人員的 Azure Person 與照片，並啟動 Person Group 訓練。員工使用 PIN 登入後，於「我要打卡」按下「人臉辨識打卡」，允許相機後即可進行 Detect 與 Identify；訓練尚未完成或未完成建檔的人員會收到提示，並可改用 PIN 打卡。
 
 ## 部署到 Azure Web App
 

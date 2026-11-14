@@ -484,6 +484,105 @@ class FaceSenseAppTests(unittest.TestCase):
 
         self.assertEqual(responses[-1].status_code, 429)
 
+    @patch.dict(
+        os.environ,
+        {
+            "AZURE_FACE_ENDPOINT": "https://example.cognitiveservices.azure.com",
+            "AZURE_FACE_KEY": "test-face-key",
+        },
+    )
+    @patch("app._azure_train_person_group")
+    @patch("app._azure_add_person_face")
+    @patch("app._azure_create_person", return_value="azure-person-1")
+    @patch("app._azure_ensure_person_group")
+    def test_admin_can_enroll_face_for_registered_person(
+        self, _mock_group, _mock_create, _mock_add, _mock_train
+    ):
+        self.assertEqual(self._login().status_code, 302)
+        self.assertEqual(self._register_person("Alex").status_code, 201)
+        image_base64 = base64.b64encode(b"\xff\xd8\xffreference").decode("ascii")
+
+        response = self.client.post(
+            "/api/people/face",
+            json={"name": "Alex", "image_base64": image_base64},
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.get_json()["face_enrolled"])
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            row = connection.execute(
+                "SELECT azure_person_id, face_image, face_enrolled_at "
+                "FROM people WHERE name = ?",
+                ("Alex",),
+            ).fetchone()
+        self.assertEqual(row[0], "azure-person-1")
+        self.assertIsNone(row[1])
+        self.assertTrue(row[2].endswith("Z"))
+
+    @patch.dict(
+        os.environ,
+        {
+            "AZURE_FACE_ENDPOINT": "https://example.cognitiveservices.azure.com",
+            "AZURE_FACE_KEY": "test-face-key",
+        },
+    )
+    @patch(
+        "app._azure_identify",
+        return_value={"personId": "azure-person-1", "confidence": 0.87},
+    )
+    @patch("app._azure_train_person_group")
+    @patch("app._azure_add_person_face")
+    @patch("app._azure_create_person", return_value="azure-person-1")
+    @patch("app._azure_ensure_person_group")
+    def test_employee_can_check_in_after_face_verification(
+        self, _mock_group, _mock_create, _mock_add, _mock_train, _mock_identify
+    ):
+        self.assertEqual(self._login().status_code, 302)
+        self.assertEqual(self._register_person("Alex").status_code, 201)
+        image_base64 = base64.b64encode(b"\xff\xd8\xffreference").decode("ascii")
+        self.client.post(
+            "/api/people/face",
+            json={"name": "Alex", "image_base64": image_base64},
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+        self.client.post("/logout", data={"csrf_token": self._csrf_token()})
+        self.assertEqual(self._person_login("Alex").status_code, 302)
+
+        captured = base64.b64encode(b"\xff\xd8\xffcaptured").decode("ascii")
+        response = self.client.post(
+            "/api/face-checkins",
+            json={"image_base64": captured},
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json()["name"], "Alex")
+        _mock_identify.assert_called_once()
+
+    def test_face_checkin_is_disabled_until_person_has_enrolled_face(self):
+        self.assertEqual(self._login().status_code, 302)
+        self.assertEqual(self._register_person("Alex").status_code, 201)
+        self.client.post("/logout", data={"csrf_token": self._csrf_token()})
+        self.assertEqual(self._person_login("Alex").status_code, 302)
+        image_base64 = base64.b64encode(b"\xff\xd8\xffcaptured").decode("ascii")
+
+        with patch.dict(
+            os.environ,
+            {
+                "AZURE_FACE_ENDPOINT": "https://example.cognitiveservices.azure.com",
+                "AZURE_FACE_KEY": "test-face-key",
+            },
+        ):
+            response = self.client.post(
+                "/api/face-checkins",
+                json={"image_base64": image_base64},
+                headers={"X-CSRF-Token": self._csrf_token()},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("尚未登記人臉", response.get_json()["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
