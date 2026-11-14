@@ -233,6 +233,11 @@ def _allow_face_detection(client_ip):
 
 
 @app.get("/")
+@app.get("/checkin")
+@app.get("/records")
+@app.get("/people")
+@app.get("/registered")
+@app.get("/settings")
 def index():
     checkin_password_configured = bool(
         os.getenv("CHECKIN_ADMIN_PASSWORD", "").strip()
@@ -325,8 +330,13 @@ def index():
         database_ready = False
         database_error = "無法讀取打卡資料庫，請稍後再試。"
 
+    page = request.path.strip("/") or "overview"
+    if page in {"people", "registered", "settings"} and not admin_authenticated:
+        return redirect("/")
+
     return render_template(
         "index.html",
+        page=page,
         face_detection_configured=face_detection_configured,
         face_detection_enabled=face_detection_enabled,
         checkin_configured=checkin_configured,
@@ -354,15 +364,15 @@ def login():
     supplied_password = request.form.get("password", "")
     expected_password = os.environ["CHECKIN_ADMIN_PASSWORD"]
     if not _allow_pin_login("admin:login"):
-        return redirect(url_for("index", admin_login_error=2))
+        return redirect("/?admin_login_error=2")
     if not hmac.compare_digest(supplied_password, expected_password):
-        return redirect(url_for("index", admin_login_error=1))
+        return redirect("/?admin_login_error=1")
 
     _clear_pin_login_attempts("admin:login")
     session.clear()
     session["checkin_admin_authenticated"] = True
     _csrf_token()
-    return redirect(url_for("index"))
+    return redirect("/")
 
 
 @app.post("/person-login")
@@ -375,9 +385,9 @@ def person_login():
     name = _normalize_name(request.form.get("name", ""))
     pin = request.form.get("pin", "")
     if not name or len(name) > 80 or not PIN_PATTERN.fullmatch(pin):
-        return redirect(url_for("index", person_login_error=1))
+        return redirect("/?person_login_error=1")
     if not _allow_pin_login(name):
-        return redirect(url_for("index", person_login_error=2))
+        return redirect("/?person_login_error=2")
 
     try:
         with closing(_connect_db()) as connection:
@@ -397,14 +407,14 @@ def person_login():
     valid_pin = has_pin and hmac.compare_digest(candidate_hash, stored_hash)
 
     if not valid_pin:
-        return redirect(url_for("index", person_login_error=1))
+        return redirect("/?person_login_error=1")
 
     _clear_pin_login_attempts(name)
     session.clear()
     session["checkin_person_id"] = person["id"]
     session["checkin_pin_hash"] = person["pin_hash"]
     _csrf_token()
-    return redirect(url_for("index"))
+    return redirect("/")
 
 
 @app.post("/logout")
@@ -419,7 +429,7 @@ def logout():
     if not _csrf_is_valid():
         return "CSRF 驗證失敗，請重新載入頁面。", 400
     session.clear()
-    return redirect(url_for("index"))
+    return redirect("/")
 
 
 @app.post("/api/people")
