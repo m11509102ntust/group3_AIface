@@ -10,11 +10,7 @@
   <body data-csrf-token="{{ csrf_token }}">
     <div class="app-shell">
       <aside class="sidebar">
-        <a class="brand" href="{{ url_for('index') }}" aria-label="FaceSense 首頁">
-          <span class="brand-mark"><span></span><span></span><span></span></span>
-          <span>Face<span>Sense</span></span>
-        </a>
-
+        <a class="brand" href="/" aria-label="FaceSense 首頁"><span class="brand-mark"><span></span><span></span><span></span></span><span>Face<span>Sense</span></span></a>
         <nav class="main-nav" aria-label="主要導覽">
           <a class="nav-item active" href="#dashboard"><span class="nav-icon">⌂</span>總覽</a>
           {% if admin_authenticated %}<a class="nav-item" href="#members"><span class="nav-icon">◎</span>人員／人臉建檔</a>{% endif %}
@@ -24,7 +20,7 @@
 
       </aside>
 
-      <main class="main-content" id="dashboard">
+      <main class="main-content">
         <header class="topbar">
           <div>
             <span class="breadcrumb">控制台 <b>/</b> 今日總覽</span>

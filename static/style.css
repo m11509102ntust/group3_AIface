@@ -90,3 +90,12 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 @media (max-width: 560px) { .settings-list { grid-template-columns: 1fr; }.settings-control { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 900px) { .checkin-grid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .checkin-controls { align-items: stretch; flex-direction: column; } }
+
+.account-menu { position: relative; }
+.account-menu summary { list-style: none; cursor: pointer; }
+.account-menu summary::-webkit-details-marker { display: none; }
+.account-panel { position: absolute; z-index: 10; top: calc(100% + 12px); right: 0; width: 280px; padding: 18px; border: 1px solid #e1eaeb; border-radius: 10px; background: #fff; box-shadow: 0 12px 30px #25414d1c; }
+.account-panel .checkin-form { max-width: none; }
+.account-panel .logout-form { margin-top: 12px; }
+.account-panel .camera-button { width: 100%; }
+.records-page { grid-template-columns: minmax(0, 1fr); }
