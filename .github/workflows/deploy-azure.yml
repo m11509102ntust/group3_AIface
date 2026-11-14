@@ -78,6 +78,11 @@ jobs:
             "AZURE_WEBAPP_NAME=$env:AZURE_PRODUCTION_WEBAPP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           } else {
             "AZURE_WEBAPP_NAME=$env:AZURE_TEST_WEBAPP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $testResourceGroup = az webapp list --query "[?name=='$env:AZURE_TEST_WEBAPP_NAME'].resourceGroup | [0]" --output tsv
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($testResourceGroup)) {
+              throw "Could not find Azure Web App $env:AZURE_TEST_WEBAPP_NAME"
+            }
+            "AZURE_RESOURCE_GROUP=$testResourceGroup" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Verify Windows Web App
