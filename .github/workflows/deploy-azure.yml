@@ -27,7 +27,6 @@ jobs:
     env:
       AZURE_WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME || vars.ZURE_WEBAPP_NAME }}
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'NTUSTlab2026' }}
-      AZURE_STAGING_SLOT: ${{ vars.AZURE_STAGING_SLOT || 'staging' }}
       PYTHON_RUNTIME_VERSION: 3.14.8
     steps:
       - uses: actions/checkout@v4
@@ -80,35 +79,19 @@ jobs:
           $platform = az webapp show --resource-group $env:AZURE_RESOURCE_GROUP --name $env:AZURE_WEBAPP_NAME --query reserved --output tsv
           if ($LASTEXITCODE -ne 0) { throw 'Azure Web App lookup failed' }
           if ($platform.Trim().ToLowerInvariant() -ne 'false') { throw 'Target must be a Windows Azure Web App' }
-          if ($env:AZURE_STAGING_SLOT -eq 'production') { throw 'Staging slot must not be production' }
-          $slot = az webapp deployment slot list `
-            --resource-group $env:AZURE_RESOURCE_GROUP `
-            --name $env:AZURE_WEBAPP_NAME `
-            --query "[?name=='$env:AZURE_STAGING_SLOT'].name" `
-            --output tsv
-          if ($LASTEXITCODE -ne 0 -or $slot.Trim() -ne $env:AZURE_STAGING_SLOT) {
-            throw "Azure staging slot '$env:AZURE_STAGING_SLOT' is not configured"
-          }
 
-      - name: Deploy to staging slot
+      - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          slot-name: ${{ env.AZURE_STAGING_SLOT }}
           package: dist
 
-      - name: Configure staging slot secrets
+      - name: Configure Flask secret
         shell: pwsh
         env:
-          CHECKIN_ADMIN_PASSWORD: ${{ secrets.CHECKIN_ADMIN_PASSWORD }}
           FLASK_SECRET_KEY: ${{ secrets.FLASK_SECRET_KEY }}
           FACE_DETECT_API_KEY: ${{ secrets.FACE_DETECT_API_KEY }}
-          AZURE_FACE_ENDPOINT: ${{ secrets.AZURE_FACE_ENDPOINT }}
-          AZURE_FACE_KEY: ${{ secrets.AZURE_FACE_KEY }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CHECKIN_ADMIN_PASSWORD)) {
-            throw 'CHECKIN_ADMIN_PASSWORD repository secret is not configured'
-          }
           if ([string]::IsNullOrWhiteSpace($env:FLASK_SECRET_KEY)) {
             throw 'FLASK_SECRET_KEY repository secret is not configured'
           }
@@ -118,83 +101,8 @@ jobs:
           az webapp config appsettings set `
             --resource-group $env:AZURE_RESOURCE_GROUP `
             --name $env:AZURE_WEBAPP_NAME `
-            --slot $env:AZURE_STAGING_SLOT `
-            --slot-settings `
-              "CHECKIN_ADMIN_PASSWORD=$env:CHECKIN_ADMIN_PASSWORD" `
+            --settings `
               "FLASK_SECRET_KEY=$env:FLASK_SECRET_KEY" `
               "FACE_DETECT_API_KEY=$env:FACE_DETECT_API_KEY" `
             --output none
-          if ($LASTEXITCODE -ne 0) { throw 'Staging application secret configuration failed' }
-          az webapp config appsettings set `
-            --resource-group $env:AZURE_RESOURCE_GROUP `
-            --name $env:AZURE_WEBAPP_NAME `
-            --slot-settings `
-              "CHECKIN_ADMIN_PASSWORD=$env:CHECKIN_ADMIN_PASSWORD" `
-              "FLASK_SECRET_KEY=$env:FLASK_SECRET_KEY" `
-              "FACE_DETECT_API_KEY=$env:FACE_DETECT_API_KEY" `
-            --output none
-          if ($LASTEXITCODE -ne 0) { throw 'Production application secret configuration failed' }
-          if (
-            -not [string]::IsNullOrWhiteSpace($env:AZURE_FACE_ENDPOINT) -and
-            -not [string]::IsNullOrWhiteSpace($env:AZURE_FACE_KEY)
-          ) {
-            az webapp config appsettings set `
-              --resource-group $env:AZURE_RESOURCE_GROUP `
-              --name $env:AZURE_WEBAPP_NAME `
-              --slot $env:AZURE_STAGING_SLOT `
-              --slot-settings `
-                "AZURE_FACE_ENDPOINT=$env:AZURE_FACE_ENDPOINT" `
-                "AZURE_FACE_KEY=$env:AZURE_FACE_KEY" `
-                "AZURE_FACE_MATCH_THRESHOLD=0.75" `
-              --output none
-            if ($LASTEXITCODE -ne 0) { throw 'Staging Azure Face configuration failed' }
-            az webapp config appsettings set `
-              --resource-group $env:AZURE_RESOURCE_GROUP `
-              --name $env:AZURE_WEBAPP_NAME `
-              --slot-settings `
-                "AZURE_FACE_ENDPOINT=$env:AZURE_FACE_ENDPOINT" `
-                "AZURE_FACE_KEY=$env:AZURE_FACE_KEY" `
-                "AZURE_FACE_MATCH_THRESHOLD=0.75" `
-              --output none
-            if ($LASTEXITCODE -ne 0) { throw 'Production Azure Face configuration failed' }
-          } else {
-            Write-Host 'Azure Face secrets are not configured; PIN check-in remains enabled.'
-          }
-
-      - name: Smoke test staging slot
-        shell: pwsh
-        run: |
-          $healthUrl = "https://$env:AZURE_WEBAPP_NAME-$env:AZURE_STAGING_SLOT.azurewebsites.net/healthz"
-          for ($attempt = 1; $attempt -le 12; $attempt++) {
-            try {
-              $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 15
-              if ($response.StatusCode -eq 200 -and $response.Content -match '"status"\s*:\s*"ok"') {
-                Write-Host "Staging health check passed."
-                exit 0
-              }
-            } catch {
-              Write-Host "Staging is not ready yet (attempt $attempt)."
-            }
-            Start-Sleep -Seconds 10
-          }
-          throw "Staging health check failed: $healthUrl"
-
-      - name: Swap staging into production
-        shell: pwsh
-        run: |
-          az webapp deployment slot swap `
-            --resource-group $env:AZURE_RESOURCE_GROUP `
-            --name $env:AZURE_WEBAPP_NAME `
-            --slot $env:AZURE_STAGING_SLOT `
-            --target-slot production `
-            --output none
-          if ($LASTEXITCODE -ne 0) { throw 'Blue-green slot swap failed' }
-
-      - name: Smoke test production
-        shell: pwsh
-        run: |
-          $healthUrl = "https://$env:AZURE_WEBAPP_NAME.azurewebsites.net/healthz"
-          $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 30
-          if ($response.StatusCode -ne 200 -or $response.Content -notmatch '"status"\s*:\s*"ok"') {
-            throw "Production health check failed: $healthUrl"
-          }
+          if ($LASTEXITCODE -ne 0) { throw 'Application secret configuration failed' }

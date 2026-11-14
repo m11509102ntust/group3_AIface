@@ -1,10 +1,10 @@
-# FaceSense AI 人臉照片建檔與打卡系統
+# FaceSense AI 人臉偵測系統
 
-使用 Flask 製作的人臉照片建檔與 PIN 打卡系統。控制台出勤統計取自 SQLite 資料庫，並依登入角色限制可見範圍；打卡紀錄、人員名冊、人臉照片及待審申請都儲存在 SQLite。
+使用 Flask 製作的 AI 人臉偵測及打卡系統。控制台出勤統計取自 SQLite 資料庫，並依登入角色限制可見範圍；打卡紀錄、人員名冊及人臉偵測啟用狀態會儲存在 SQLite。即時人臉偵測可啟用瀏覽器攝影機，將單張 JPEG 影像送至 Face Detection API。
 
-本人先啟動瀏覽器攝影機並倒數 5 秒拍照，預覽照片後再填寫姓名、個人 PIN 並明確同意，提交建檔申請。照片與 PIN 雜湊先存於待審資料；管理員核准後才會在同一筆資料庫交易中建立人員名冊與人臉照片，並允許使用該 PIN 打卡。管理員拒絕時會刪除整筆待審資料。照片不會送到外部偵測服務。此功能只建立後續可用的照片資料，尚未實作身份辨識或自動打卡。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
+即時功能只偵測臉部位置，不會辨識姓名或自動打卡；目前尚未選定身份辨識服務。每位人員以姓名和個人 PIN 登入後，只能記錄自己的打卡及查看自己的紀錄。管理員使用獨立密碼管理名冊，新增人員或確認後重設其 PIN；未登記人員不能自行註冊或占用姓名。PIN 以 PBKDF2 雜湊儲存，不會保存明文。影像不會由此 Flask 應用程式保存。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
 
-每位人員仍以姓名和個人 PIN 登入後，才能記錄自己的打卡及查看自己的紀錄。管理員使用獨立密碼審核申請、管理名冊及刪除照片；同名的既有人員或待審申請不可重複提交，且未核准者不能登入打卡。PIN 以 PBKDF2 雜湊儲存，不會保存明文。僅在取得本人明確同意後建檔；SQLite 資料庫及其備份均須依人臉資料的敏感程度妥善控管。
+偵測回應目前以 JSON 原文顯示；供應商的 OpenAPI 文件沒有描述回應欄位結構，因此尚未繪製臉部框。管理員可在系統設定中啟用或停用人臉偵測，但不能在網站讀取或修改 API 金鑰。後端另設每個來源 IP 每分鐘 10 次的程序內限流；此限制會在程序重啟時重設，多個應用程式執行個體不會共用計數。
 
 ## 啟動
 
@@ -19,66 +19,63 @@ python app.py
 
 接著開啟 http://127.0.0.1:5000/ 。若 PowerShell 不允許啟用虛擬環境，也可以使用 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` 和 `.\.venv\Scripts\python.exe app.py`。
 
-第一次啟動前，請在專案根目錄複製範例設定並用記事本填入自己的密碼與秘密金鑰：
-
-```powershell
-Copy-Item .env.example .env
-notepad .env
-```
-
-`.env` 已加入 Git 忽略清單，不要提交或分享此檔案。`CHECKIN_ADMIN_PASSWORD` 是管理員登入密碼；個人 PIN 則由每位人員建檔時自行設定，系統只會將 PIN 雜湊存進資料庫，無須在 `.env` 設定。
-
 執行測試：`python -m unittest discover -s tests`
 
 ##正式站: https://ntustwebtest18.azurewebsites.net/
 
 ## 打卡登入與 SQLite
 
-本機打卡頁面提供個人打卡登入及管理員人員管理。應用程式啟動時會從專案根目錄 `.env` 載入設定；作業系統已設定的環境變數優先於 `.env`：
+打卡頁面提供個人打卡登入及管理員人員管理。設定以下伺服器環境變數後，重新啟動應用程式：
 
-- `CHECKIN_ADMIN_PASSWORD`：強且獨有的管理員密碼。知道此密碼的人可登入管理員頁面，核准或拒絕建檔申請、管理名冊及刪除照片；此密碼不會用於一般人員打卡。
+- `CHECKIN_ADMIN_PASSWORD`：設定強且獨有的管理員密碼。管理員可新增人員及設定／重設個人 PIN；此密碼不會用於一般人員打卡。
 - `FLASK_SECRET_KEY`：Flask 簽署登入 session 的隨機秘密；請使用高熵值，勿重複使用 API key 或提交至 Git。
 - `CHECKIN_DB_PATH`（選用）：SQLite 檔案的完整路徑。未設定時，本機使用 Flask `instance` 資料夾；Azure Windows App Service 使用 `D:\home\data\checkins.sqlite3`。
 
-本人提交建檔申請後，申請會先進入待審狀態；此時尚未建立可登入的人員。管理員登入後可檢視照片及申請姓名，再選擇核准或拒絕。核准時姓名、PIN 雜湊與照片會一起建立；拒絕時待審資料會刪除。人員以已核准的姓名與 PIN 登入後，打卡紀錄由登入的 person ID 決定，不能從瀏覽器指定其他姓名。個人 PIN 依姓名、管理員登入依管理員帳號，皆限制每個程序 15 分鐘內最多 5 次嘗試；程序重啟或多個執行個體不會共用計數。員工若看見「姓名或 PIN 不正確」，請確認申請是否已由管理員核准。
+管理員先登入人員管理，輸入姓名與 6 至 12 位數字 PIN；新姓名會先要求確認，已存在姓名會先要求確認重設 PIN。人員以已登記的姓名與 PIN 登入後，打卡紀錄由登入的 person ID 決定，不能從瀏覽器指定其他姓名。個人 PIN 依姓名、管理員登入依管理員帳號，皆限制每個程序 15 分鐘內最多 5 次嘗試；程序重啟或多個執行個體不會共用計數。員工若看見「姓名或 PIN 不正確」，請確認姓名是否已由管理員登記。
 
-產生 `FLASK_SECRET_KEY` 的方式（請在自己的終端機執行，將輸出貼入本機 `.env`，不要貼到聊天或提交至儲存庫）：
+可使用 Python 產生秘密值（請在自己的終端機執行，不要將輸出貼到聊天或提交到儲存庫）：
 
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-資料庫會建立 `people` 人員名冊（含個人 PIN 雜湊）、`enrollment_requests` 待審申請表、`face_samples` 人臉照片表，以及 `mytable` 打卡資料表（包含 `姓名`、`打卡時間` 欄位）。每筆核准與打卡均以資料庫交易記錄。時間以 UTC ISO-8601 格式儲存，頁面依瀏覽器時區顯示。Azure 預設路徑位於持久化的 `D:\home`，不要將資料庫指定到部署目錄；若覆寫 `CHECKIN_DB_PATH`，仍須選用 Azure 持久資料目錄並自行安排備份。
+本機 PowerShell 設定範例：
 
-總覽出勤統計由實際打卡資料計算。管理員可查看全體今日打卡筆數、今日不重複打卡人數及名冊人數；員工只會看到自己的打卡統計，未登入者不會看到出勤數字。照片存於 SQLite 的 `face_samples` 表，以人員 ID 為主鍵；重新拍照會取代既有照片，管理員可從人員名冊刪除照片。
+```powershell
+$env:CHECKIN_ADMIN_PASSWORD = "自行設定的管理員密碼"
+$env:FLASK_SECRET_KEY = "自行產生的隨機秘密"
+python app.py
+```
 
-身份辨識目前未實作。既有 `FACE_DETECT_API_KEY` 對應的是臉部位置偵測服務，不支援此應用所需的人員照片建檔或身份比對；本程式不再呼叫該服務。要啟用辨識，需另行選定支援身份比對的服務，並設計資料保存與刪除流程。
+資料庫會建立 `people` 人員名冊（含個人 PIN 雜湊），以及 `mytable` 打卡資料表（包含 `姓名`、`打卡時間` 欄位）。每筆打卡以資料庫交易記錄。時間以 UTC ISO-8601 格式儲存，頁面依瀏覽器時區顯示。Azure 預設路徑位於持久化的 `D:\home`，不要將資料庫指定到部署目錄；若覆寫 `CHECKIN_DB_PATH`，仍須選用 Azure 持久資料目錄並自行安排備份。
 
-本機 `.env` 僅供本機程式載入，部署流程不會打包 `.env`，GitHub Actions 也無法讀取你電腦上的本機檔案。若要讓 Azure 正式網站也能使用管理員密碼，請在 GitHub 儲存庫 **Settings → Secrets and variables → Actions → New repository secret** 新增 `CHECKIN_ADMIN_PASSWORD`，值設為與本機 `.env` 相同的密碼。部署 workflow 會透過 GitHub Actions Secret 自動更新 Azure App Service 設定；不必手動進 Azure Portal 設定，也不要將 `.env` 或密碼提交至 Git。知道該密碼的人可在網站登入管理員並管理人員。
+總覽出勤統計由實際打卡資料計算。管理員可查看全體今日打卡筆數、今日不重複打卡人數及名冊人數；員工只會看到自己的打卡統計，未登入者不會看到出勤數字。人臉偵測啟用狀態儲存在 SQLite 的 `app_settings` 表。
 
-## 人臉照片建檔與管理員審核
+管理員登入後可在頁面「系統設定」開關人臉偵測。API 金鑰、管理員密碼及 Flask session 金鑰只從 Azure App Service 環境變數讀取，不會由網站表單收集。身份辨識目前未實作；需先選定支援身份比對的服務，設計人臉資料的明確同意、保存與刪除流程後才能啟用。
 
-本人在「先拍照，再提交建檔」區啟動攝影機後，系統會自動倒數 5 秒拍照；檢視照片預覽後，再填寫姓名、6 至 12 位數字 PIN 並勾選明確同意，最後提交申請。拍攝照片在提交前只保留於目前瀏覽器記憶體，不會上傳。申請送出後，照片和 PIN 雜湊存入 `enrollment_requests`，但申請者尚不能打卡。
+Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHECKIN_ADMIN_PASSWORD`、`FLASK_SECRET_KEY`，可選擇設定 `CHECKIN_DB_PATH` 為 `D:\home\data\checkins.sqlite3`。儲存設定後確認應用程式已重新啟動。這些設定是 Azure App Service 設定，不是 GitHub Actions secrets，也不應寫入 workflow 或程式碼。
 
-管理員在「待審建檔申請」檢視人員姓名與照片後核准或拒絕。核准會將人員與照片一起新增至正式名冊；同名既有人員會被拒絕核准，避免覆寫帳號。拒絕會刪除待審資料。核准後管理員也可從「已登記人員」刪除照片。每張照片上限 5 MB。
+## 人臉偵測設定
 
-資料庫的待審申請與 `face_samples` 表保存照片二進位內容、MIME 類型、建立時間及同意確認時間。照片是敏感個人資料，請限制資料庫及備份存取，並依實際需求設定保留期間。Azure Face 會以目前照片與已核准名冊照片進行比對；金鑰只能放在環境變數或 Azure 設定，不可提交至 Git。
+設定伺服器環境變數 `FACE_DETECT_API_KEY`，Flask 後端會以 `x-api-key` 標頭呼叫 `https://api-face-detect.knowlez.com/v1/face/detect`。金鑰不會送到瀏覽器或存入儲存庫。
+
+本機測試可在目前 PowerShell 工作階段設定：
+
+```powershell
+$env:FACE_DETECT_API_KEY = "由服務供應商簽發的有效金鑰"
+python app.py
+```
+
+部署到 Azure 前，請在 Azure Portal 的 Web App → **Settings → Environment variables** 加入 `FACE_DETECT_API_KEY`，儲存後確認應用程式已重新啟動。任何曾貼到聊天、提交到 Git 或其他不受信任位置的金鑰都應先撤銷，再使用新金鑰。
 
 ## 部署到 Azure Web App
 
-`.github/workflows/deploy-azure.yml` 在 `main` 分支的應用程式、測試或 workflow 異動時執行，也可以從 GitHub Actions 手動觸發。流程會在 Windows runner 上執行測試、下載官方 Python 3.14.8 可嵌入版本，先部署至 Azure Web App 的 staging slot，通過 `/healthz` smoke test 後再 swap 至 production，形成藍綠部署。站點名稱與資源群組由儲存庫變數 `AZURE_WEBAPP_NAME`、`AZURE_RESOURCE_GROUP` 指定；staging slot 可由 `AZURE_STAGING_SLOT` 指定，預設為 `staging`。站點透過 `web.config` 的 IIS HttpPlatformHandler 啟動 `serve.py`，以 Waitress 提供 Flask 服務。
+`.github/workflows/deploy-azure.yml` 在 `main` 分支的應用程式、測試或 workflow 異動時執行，也可以從 GitHub Actions 手動觸發。流程會在 Windows runner 上執行測試、下載官方 Python 3.14.8 可嵌入版本，將 Python 與相依套件一起部署到 Azure Web App（由儲存庫變數 `AZURE_WEBAPP_NAME` 與 `AZURE_RESOURCE_GROUP` 指定）。站點透過 `web.config` 的 IIS HttpPlatformHandler 啟動 `serve.py`，以 Waitress 提供 Flask 服務。
 
 此方法使用**隨部署包提供的 Python**，不依賴 Windows App Service 內建 Python 執行環境；HttpPlatformHandler 必須在目標站點可用。部署時會確認目標是 Windows Web App。
 
 在 GitHub 儲存庫 **Settings → Secrets and variables → Actions** 確認：
 
 - Repository secret `AZURE_CREDENTIALS`：Azure 服務主體的 `clientId`、`clientSecret`、`subscriptionId`、`tenantId` 組成的 JSON。此 Secret 已設定，不要把內容寫進程式碼。
-- Repository secret `CHECKIN_ADMIN_PASSWORD`：與本機 `.env` 相同的管理員密碼；部署 workflow 會將其套用至 Azure App Service，不需在 Azure Portal 手動設定。
-- Repository secret `FLASK_SECRET_KEY`：Flask session 簽署金鑰。
-- Repository secret `FACE_DETECT_API_KEY`：部署 workflow 所需的既有 API 金鑰。
-- Repository secret `AZURE_FACE_ENDPOINT`：Azure AI Face resource endpoint。
-- Repository secret `AZURE_FACE_KEY`：Azure AI Face resource key。
 
 請確認該服務主體對指定的 Web App 具有部署權限（例如該站點的 **Website Contributor**）。推送符合上述條件的 `main` 分支異動，或從 GitHub Actions 手動執行工作流程即可部署。
-
-`AZURE_FACE_ENDPOINT` 與 `AZURE_FACE_KEY` 是選用設定。尚未建立 Azure AI Face 資源時，部署仍會完成，正式站會保留個人 PIN 打卡；兩個 secrets 都設定後重新部署，才會啟用臉部辨識打卡。

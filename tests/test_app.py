@@ -6,10 +6,14 @@ import tempfile
 import unittest
 from contextlib import closing
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import requests
 
 from app import (
     PIN_LOGIN_MAX_ATTEMPTS,
+    _face_detect_rate_lock,
+    _face_detect_requests,
     _pin_login_attempts,
     _pin_login_lock,
     app,
@@ -32,6 +36,8 @@ class FaceSenseAppTests(unittest.TestCase):
         )
         self.environment.start()
         self.client = app.test_client()
+        with _face_detect_rate_lock:
+            _face_detect_requests.clear()
         with _pin_login_lock:
             _pin_login_attempts.clear()
 
@@ -57,23 +63,16 @@ class FaceSenseAppTests(unittest.TestCase):
         )
 
     def _register_person(self, name="王小明", pin="123456"):
-        csrf_token = self._csrf_token()
         response = self.client.post(
-            "/api/enrollment-requests",
-            json={
-                "name": name,
-                "pin": pin,
-                "face_image_base64": base64.b64encode(b"\xff\xd8\xffsample").decode(
-                    "ascii"
-                ),
-                "face_image_consent": True,
-            },
-            headers={"X-CSRF-Token": csrf_token},
+            "/api/people",
+            json={"name": name, "pin": pin},
+            headers={"X-CSRF-Token": self._csrf_token()},
         )
-        if response.status_code == 202:
+        if response.status_code == 409 and response.get_json()["needs_confirmation"]:
             response = self.client.post(
-                f"/api/enrollment-requests/{response.get_json()['request_id']}/approve",
-                headers={"X-CSRF-Token": csrf_token},
+                "/api/people",
+                json={"name": name, "pin": pin, "confirm_new_person": True},
+                headers={"X-CSRF-Token": self._csrf_token()},
             )
         return response
 
@@ -87,188 +86,24 @@ class FaceSenseAppTests(unittest.TestCase):
             },
         )
 
-    def test_initial_page_renders_face_enrollment_dashboard_without_detection(self):
+    def test_initial_page_renders_face_recognition_dashboard(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         page = response.get_data(as_text=True)
         self.assertIn("FaceSense", page)
-        self.assertIn("AI人臉辨識打卡系統測試", page)
-        self.assertIn("倒數拍照建檔", page)
-        self.assertIn("先拍照，再提交建檔", page)
-        self.assertIn("提交管理員審核", page)
-        self.assertNotIn("即時人臉偵測", page)
-        self.assertNotIn("偵測人臉", page)
-        self.assertNotIn("face-detect.js", page)
+        self.assertIn("AI 人臉偵測系統", page)
+        self.assertIn("即時人臉偵測", page)
         self.assertIn("個人 PIN", page)
         self.assertIn("管理員登入（人員管理）", page)
         self.assertIn("登入後即可查看已儲存的打卡紀錄", page)
-        self.assertIn("照片建檔不等於身份辨識", page)
+        self.assertIn("不辨識身份或記錄打卡", page)
         self.assertIn("今日打卡筆數", page)
-        self.assertIn("系統設定與服務狀態", page)
+        self.assertNotIn("系統設定與服務狀態", page)
+        self.assertEqual(self.client.get("/settings").status_code, 302)
         self.assertNotIn("示意", page)
         self.assertNotIn("1,284", page)
         self.assertNotIn("待確認事件", page)
         self.assertNotIn('aria-label="通知"', page)
-
-    def test_enrollment_request_requires_admin_approval_before_person_is_created(self):
-        csrf_token = self._csrf_token()
-        image_bytes = b"\xff\xd8\xffsample-jpeg"
-        response = self.client.post(
-            "/api/enrollment-requests",
-            json={
-                "name": " 王小明 ",
-                "pin": "123456",
-                "face_image_base64": base64.b64encode(image_bytes).decode("ascii"),
-                "face_image_consent": True,
-            },
-            headers={"X-CSRF-Token": csrf_token},
-        )
-        self.assertEqual(response.status_code, 202)
-        request_id = response.get_json()["request_id"]
-        self.assertEqual(response.get_json()["status"], "pending")
-        self.assertEqual(
-            self.client.get(
-                f"/api/enrollment-requests/{request_id}/photo"
-            ).status_code,
-            401,
-        )
-
-        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
-            self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM people").fetchone()[0], 0
-            )
-            pending = connection.execute(
-                "SELECT name, pin_hash, image, consented_at "
-                "FROM enrollment_requests WHERE id = ?",
-                (request_id,),
-            ).fetchone()
-        self.assertEqual(pending[0], "王小明")
-        self.assertNotEqual(pending[1], "123456")
-        self.assertEqual(pending[2], image_bytes)
-        self.assertTrue(pending[3])
-        login = self._person_login("王小明", "123456")
-        self.assertIn("person_login_error=1", login.location)
-
-        self.assertEqual(self._login().status_code, 302)
-        csrf_token = self._csrf_token()
-        response = self.client.post(
-            f"/api/enrollment-requests/{request_id}/approve",
-            headers={"X-CSRF-Token": csrf_token},
-        )
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.get_json()["name"], "王小明")
-
-        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
-            self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM people").fetchone()[0], 1
-            )
-            self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM enrollment_requests").fetchone()[0],
-                0,
-            )
-            self.assertEqual(
-                connection.execute("SELECT image FROM face_samples").fetchone()[0],
-                image_bytes,
-            )
-
-        self.client.post("/logout", data={"csrf_token": csrf_token})
-        self.assertEqual(self._person_login("王小明", "123456").status_code, 302)
-
-    def test_rejected_enrollment_request_is_deleted_and_never_activated(self):
-        response = self.client.post(
-            "/api/enrollment-requests",
-            json={
-                "name": "王小明",
-                "pin": "123456",
-                "face_image_base64": base64.b64encode(b"\xff\xd8\xffsample").decode(
-                    "ascii"
-                ),
-                "face_image_consent": True,
-            },
-            headers={"X-CSRF-Token": self._csrf_token()},
-        )
-        self.assertEqual(response.status_code, 202)
-        request_id = response.get_json()["request_id"]
-
-        self.assertEqual(self._login().status_code, 302)
-        response = self.client.delete(
-            f"/api/enrollment-requests/{request_id}",
-            headers={"X-CSRF-Token": self._csrf_token()},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.get_json()["deleted"])
-        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
-            self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM people").fetchone()[0], 0
-            )
-            self.assertEqual(
-                connection.execute(
-                    "SELECT COUNT(*) FROM enrollment_requests"
-                ).fetchone()[0],
-                0,
-            )
-        self.assertIn(
-            "person_login_error=1",
-            self._person_login("王小明", "123456").location,
-        )
-
-    def test_enrollment_requests_validate_consent_photo_and_duplicate_name(self):
-        headers = {"X-CSRF-Token": self._csrf_token()}
-        payload = {
-            "name": "王小明",
-            "pin": "123456",
-            "face_image_base64": base64.b64encode(b"not an image").decode("ascii"),
-            "face_image_consent": True,
-        }
-        self.assertEqual(
-            self.client.post(
-                "/api/enrollment-requests", json=payload, headers=headers
-            ).status_code,
-            400,
-        )
-        payload["face_image_base64"] = base64.b64encode(b"\xff\xd8\xffsample").decode(
-            "ascii"
-        )
-        payload["face_image_consent"] = False
-        self.assertEqual(
-            self.client.post(
-                "/api/enrollment-requests", json=payload, headers=headers
-            ).status_code,
-            400,
-        )
-        payload["face_image_consent"] = True
-        self.assertEqual(
-            self.client.post(
-                "/api/enrollment-requests", json=payload, headers=headers
-            ).status_code,
-            202,
-        )
-        self.assertEqual(
-            self.client.post(
-                "/api/enrollment-requests",
-                json=payload,
-                headers=headers,
-            ).status_code,
-            409,
-        )
-
-    def test_admin_cannot_bypass_approval_to_create_new_people(self):
-        self.assertEqual(self._login().status_code, 302)
-        response = self.client.post(
-            "/api/people",
-            json={
-                "name": "王小明",
-                "pin": "123456",
-                "confirm_new_person": True,
-            },
-            headers={"X-CSRF-Token": self._csrf_token()},
-        )
-        self.assertEqual(response.status_code, 409)
-        self.assertIn("先提交建檔申請", response.get_json()["error"])
-        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
-            self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM people").fetchone()[0], 0
-            )
 
     def test_dashboard_metrics_use_real_attendance_and_are_private(self):
         self.assertEqual(self._login().status_code, 302)
@@ -295,6 +130,39 @@ class FaceSenseAppTests(unittest.TestCase):
         anonymous_page = anonymous_client.get("/").get_data(as_text=True)
         self.assertNotIn(">2</strong>", anonymous_page)
         self.assertNotIn("王小明", anonymous_page)
+
+    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    def test_admin_can_disable_face_detection_and_detection_is_blocked(self):
+        self.assertEqual(self._login().status_code, 302)
+        response = self.client.post(
+            "/api/settings/face-detection",
+            json={"enabled": False},
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"enabled": False})
+
+        image_base64 = base64.b64encode(b"\xff\xd8\xffsample-jpeg").decode("ascii")
+        response = self.client.post(
+            "/api/face/detect",
+            json={"image_base64": image_base64},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("管理員停用", response.get_json()["error"])
+
+    def test_face_detection_setting_requires_admin_and_csrf(self):
+        response = self.client.post(
+            "/api/settings/face-detection",
+            json={"enabled": False},
+        )
+        self.assertEqual(response.status_code, 401)
+
+        self.assertEqual(self._login().status_code, 302)
+        response = self.client.post(
+            "/api/settings/face-detection",
+            json={"enabled": False},
+        )
+        self.assertEqual(response.status_code, 400)
 
     def test_checkins_require_login(self):
         response = self.client.post(
@@ -328,11 +196,31 @@ class FaceSenseAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 401)
 
-    def test_admin_approves_person_then_individual_pin_records_checkin(self):
+    def test_admin_confirms_new_person_then_individual_pin_records_checkin(self):
         self.assertEqual(self._login().status_code, 302)
         csrf_token = self._csrf_token()
 
-        response = self._register_person(" 王小明 ", "123456")
+        response = self.client.post(
+            "/api/people",
+            json={"name": " 王小明 ", "pin": "123456"},
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.get_json()["needs_confirmation"])
+
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM people").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM mytable").fetchone()[0], 0)
+
+        response = self.client.post(
+            "/api/people",
+            json={
+                "name": "王小明",
+                "pin": "123456",
+                "confirm_new_person": True,
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()["name"], "王小明")
 
@@ -363,46 +251,6 @@ class FaceSenseAppTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row[0], "王小明")
         self.assertTrue(row[1].endswith("Z"))
-
-    def test_registered_face_can_check_in_without_person_login(self):
-        self.assertEqual(self._login().status_code, 302)
-        self.assertEqual(self._register_person("王小明", "123456").status_code, 201)
-        csrf_token = self._csrf_token()
-        with patch.dict(
-            os.environ,
-            {
-                "AZURE_FACE_ENDPOINT": "https://face.example.com",
-                "AZURE_FACE_KEY": "test-key",
-            },
-        ), patch("app._face_matches", return_value=(True, None)):
-            response = self.client.post(
-                "/api/face-checkins",
-                json={
-                    "image_base64": base64.b64encode(
-                        b"\xff\xd8\xffcamera-image"
-                    ).decode("ascii")
-                },
-                headers={"X-CSRF-Token": csrf_token},
-            )
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.get_json()["name"], "王小明")
-        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
-            row = connection.execute(
-                'SELECT "姓名" FROM mytable'
-            ).fetchone()
-        self.assertEqual(row[0], "王小明")
-
-    def test_face_check_in_requires_azure_configuration(self):
-        response = self.client.post(
-            "/api/face-checkins",
-            json={
-                "image_base64": base64.b64encode(b"\xff\xd8\xffcamera-image").decode(
-                    "ascii"
-                )
-            },
-            headers={"X-CSRF-Token": self._csrf_token()},
-        )
-        self.assertEqual(response.status_code, 503)
 
     def test_existing_name_requires_confirmation_before_pin_reset(self):
         self.assertEqual(self._login().status_code, 302)
@@ -555,100 +403,87 @@ class FaceSenseAppTests(unittest.TestCase):
                 )
                 response = self.client.post("/api/checkins", json={})
                 self.assertEqual(response.status_code, 503)
-                response = self.client.post("/api/enrollment-requests", json={})
-                self.assertEqual(response.status_code, 503)
         finally:
             app.secret_key = original_secret_key
-
-    def test_enrollment_warning_only_lists_missing_server_settings(self):
-        with patch.dict(os.environ, {"CHECKIN_ADMIN_PASSWORD": ""}):
-            page = self.client.get("/").get_data(as_text=True)
-        self.assertIn("CHECKIN_ADMIN_PASSWORD", page)
-        warning = page.split("管理員審核尚未啟用", 1)[1].split("</p>", 1)[0]
-        self.assertNotIn("FLASK_SECRET_KEY", warning)
-
-    def test_admin_can_save_and_delete_a_face_photo(self):
-        self.assertEqual(
-            self.client.delete("/api/people/1/face-photo").status_code,
-            401,
-        )
-        self.assertEqual(self._login().status_code, 302)
-        csrf_token = self._csrf_token()
-        image_bytes = b"\xff\xd8\xffsample"
-
-        response = self._register_person("王小明", "123456")
-        self.assertEqual(response.status_code, 201)
-        self.assertTrue(response.get_json()["has_face_sample"])
-        person_id = response.get_json()["person_id"]
-
-        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
-            photo = connection.execute(
-                "SELECT image, content_type, consented_at "
-                "FROM face_samples WHERE person_id = ?",
-                (person_id,),
-            ).fetchone()
-        self.assertEqual(photo[0], image_bytes)
-        self.assertEqual(photo[1], "image/jpeg")
-        self.assertTrue(photo[2])
-        self.assertIn("照片已建檔", self.client.get("/").get_data(as_text=True))
-
-        response = self.client.delete(f"/api/people/{person_id}/face-photo")
-        self.assertEqual(response.status_code, 400)
-        response = self.client.delete(
-            f"/api/people/{person_id}/face-photo",
-            headers={"X-CSRF-Token": csrf_token},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.get_json()["deleted"])
-        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
-            self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM face_samples").fetchone()[0],
-                0,
-            )
-
-    def test_face_photo_requires_a_supported_image_and_explicit_consent(self):
-        self.assertEqual(self._login().status_code, 302)
-        csrf_token = self._csrf_token()
-        headers = {"X-CSRF-Token": csrf_token}
-        response = self.client.post(
-            "/api/people",
-            json={
-                "name": "王小明",
-                "pin": "123456",
-                "confirm_new_person": True,
-                "face_image_base64": base64.b64encode(b"not an image").decode("ascii"),
-                "face_image_consent": True,
-            },
-            headers=headers,
-        )
-        self.assertEqual(response.status_code, 400)
-        response = self.client.post(
-            "/api/people",
-            json={
-                "name": "王小明",
-                "pin": "123456",
-                "confirm_new_person": True,
-                "face_image_base64": base64.b64encode(
-                    b"\xff\xd8\xffsample-jpeg"
-                ).decode("ascii"),
-            },
-            headers=headers,
-        )
-        self.assertEqual(response.status_code, 400)
-        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
-            self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM people").fetchone()[0],
-                0,
-            )
 
     def test_root_route_rejects_post_requests(self):
         response = self.client.post("/", data={"unused": "data"})
         self.assertEqual(response.status_code, 405)
 
-    def test_health_endpoint_does_not_expose_private_data(self):
-        response = self.client.get("/healthz")
+    def test_face_detection_requires_server_side_api_key(self):
+        with patch.dict(os.environ, {}, clear=True):
+            response = self.client.post(
+                "/api/face/detect",
+                json={"image_base64": "aGVsbG8="},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("API 金鑰", response.get_json()["error"])
+
+    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    @patch("app.requests.post")
+    def test_face_detection_forwards_image_using_server_key(self, mock_post):
+        image_bytes = b"\xff\xd8\xffsample-jpeg"
+        image_base64 = base64.b64encode(image_bytes).decode("ascii")
+        provider_response = Mock()
+        provider_response.status_code = 201
+        provider_response.json.return_value = {"faces": []}
+        mock_post.return_value = provider_response
+
+        response = self.client.post(
+            "/api/face/detect",
+            json={"image_base64": image_base64},
+        )
+
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"status": "ok"})
+        self.assertEqual(response.get_json(), {"faces": []})
+        mock_post.assert_called_once()
+        self.assertEqual(
+            mock_post.call_args.kwargs["headers"],
+            {"x-api-key": "server-only-test-key"},
+        )
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"],
+            {"image_base64": image_base64},
+        )
+        self.assertNotIn("server-only-test-key", response.get_data(as_text=True))
+
+    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    @patch("app.requests.post")
+    def test_face_detection_rejects_invalid_image_data(self, mock_post):
+        response = self.client.post(
+            "/api/face/detect",
+            json={"image_base64": base64.b64encode(b"not an image").decode("ascii")},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        mock_post.assert_not_called()
+
+    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    @patch("app.requests.post", side_effect=requests.Timeout)
+    def test_face_detection_reports_upstream_timeout(self, _mock_post):
+        image_base64 = base64.b64encode(b"\xff\xd8\xffsample-jpeg").decode("ascii")
+
+        response = self.client.post(
+            "/api/face/detect",
+            json={"image_base64": image_base64},
+        )
+
+        self.assertEqual(response.status_code, 504)
+        self.assertIn("逾時", response.get_json()["error"])
+
+    def test_face_detection_rate_limits_requests(self):
+        with patch.dict(os.environ, {}, clear=True):
+            responses = [
+                self.client.post(
+                    "/api/face/detect",
+                    json={"image_base64": "aGVsbG8="},
+                )
+                for _ in range(11)
+            ]
+
+        self.assertEqual(responses[-1].status_code, 429)
+
 
 if __name__ == "__main__":
     unittest.main()
