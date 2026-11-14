@@ -85,8 +85,18 @@ if (cameraFrame && video && canvas && startButton && detectButton && stopButton)
   saveFaceButton?.addEventListener("click", async () => {
     const nameInput = document.getElementById("person-name");
     const personForm = document.getElementById("person-form");
-    if (!capturedImageBase64 || !nameInput?.value.trim() || !personForm) {
-      cameraStatus.textContent = "請先填寫人員姓名並完成單一人臉偵測。";
+    const registeredName = personForm?.dataset.registeredName || "";
+    const currentName = nameInput?.value.trim() || "";
+    if (!capturedImageBase64 || !currentName || !personForm) {
+      cameraStatus.textContent = "請先新增人員與 PIN，再完成單一人臉擷取。";
+      return;
+    }
+    if (!registeredName) {
+      cameraStatus.textContent = "請先按「新增人員／重設 PIN」完成姓名與 PIN 登記。";
+      return;
+    }
+    if (currentName.toLocaleLowerCase() !== registeredName.toLocaleLowerCase()) {
+      cameraStatus.textContent = "姓名已變更，請先重新新增或更新 PIN，再儲存人臉建檔。";
       return;
     }
 

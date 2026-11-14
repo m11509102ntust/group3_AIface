@@ -141,8 +141,9 @@ if (personForm) {
         document.getElementById("registered-people")?.append(option);
       }
 
-      personForm.reset();
-      personStatus.textContent = `${result.name} 的 PIN 已安全儲存。`;
+      personForm.dataset.registeredName = result.name;
+      pinInput.value = "";
+      personStatus.textContent = `${result.name} 的 PIN 已安全儲存，現在可以進行人臉建檔。`;
     } catch (error) {
       personStatus.textContent =
         error instanceof TypeError
@@ -150,7 +151,6 @@ if (personForm) {
           : error.message;
     } finally {
       submitButton.disabled = false;
-      pinInput.value = "";
     }
   });
 }
