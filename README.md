@@ -2,7 +2,7 @@
 
 使用 Flask 製作的 AI 人臉偵測及打卡系統。控制台出勤統計取自 SQLite 資料庫，並依登入角色限制可見範圍；打卡紀錄、人員名冊及人臉偵測啟用狀態會儲存在 SQLite。即時人臉偵測可啟用瀏覽器攝影機，將單張 JPEG 影像送至 Face Detection API。
 
-即時功能只偵測臉部位置，不會辨識姓名或自動打卡；目前尚未選定身份辨識服務。每位人員以姓名和個人 PIN 登入後，只能記錄自己的打卡及查看自己的紀錄。管理員使用獨立密碼管理名冊，新增人員或確認後重設其 PIN；未登記人員不能自行註冊或占用姓名。PIN 以 PBKDF2 雜湊儲存，不會保存明文。影像不會由此 Flask 應用程式保存。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
+人臉建檔會把辨識服務回傳的 embedding 以 JSON 數值向量儲存在 SQLite `people.face_embedding`；影像不會由此 Flask 應用程式保存。辨識時以 cosine similarity 與已建檔向量比較，達到 `FACE_RECOGNITION_THRESHOLD`（預設 0.65）才會自動寫入 `mytable`。每位人員仍可使用姓名和個人 PIN 登入後打卡。管理員使用獨立密碼管理名冊，新增人員或確認後重設其 PIN；未登記人員不能自行註冊或占用姓名。PIN 以 PBKDF2 雜湊儲存，不會保存明文。瀏覽器攝影機須在 HTTPS 或 localhost 中使用。
 
 偵測回應目前以 JSON 原文顯示；供應商的 OpenAPI 文件沒有描述回應欄位結構，因此尚未繪製臉部框。管理員可在系統設定中啟用或停用人臉偵測，但不能在網站讀取或修改 API 金鑰。後端另設每個來源 IP 每分鐘 10 次的程序內限流；此限制會在程序重啟時重設，多個應用程式執行個體不會共用計數。
 
@@ -51,7 +51,9 @@ python app.py
 
 總覽出勤統計由實際打卡資料計算。管理員可查看全體今日打卡筆數、今日不重複打卡人數及名冊人數；員工只會看到自己的打卡統計，未登入者不會看到出勤數字。人臉偵測啟用狀態儲存在 SQLite 的 `app_settings` 表。
 
-管理員登入後可在頁面「系統設定」開關人臉偵測。API 金鑰、管理員密碼及 Flask session 金鑰只從 Azure App Service 環境變數讀取，不會由網站表單收集。身份辨識目前未實作；需先選定支援身份比對的服務，設計人臉資料的明確同意、保存與刪除流程後才能啟用。
+管理員登入後先到「人員／人臉建檔」，選擇已登記人員並拍攝清楚正面影像建立 embedding；之後在 `/checkin` 使用「辨識並打卡」。API 必須回傳 `embedding`、`face_embedding`、`encoding` 或 `vector` 數值陣列；若目前的服務只回傳臉部位置，系統會明確拒絕建檔，不會把位置座標當成人臉模型。管理員可在「系統設定」開關人臉辨識。API 金鑰、管理員密碼及 Flask session 金鑰只從 Azure App Service 環境變數讀取，不會由網站表單收集。
+
+若 `people` 表有 `photo`、`photo_blob`、`image`、`image_blob`、`face_photo`、`avatar` 或 `picture` 的 BLOB 欄位，管理員開啟「人員／人臉建檔」頁面時會自動為尚未建立模型且有照片的人員建立 embedding。照片必須是 JPEG 或 PNG，且不得超過 5 MB；照片欄位只會被讀取，不會被覆寫。
 
 Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHECKIN_ADMIN_PASSWORD`、`FLASK_SECRET_KEY`，可選擇設定 `CHECKIN_DB_PATH` 為 `D:\home\data\checkins.sqlite3`。儲存設定後確認應用程式已重新啟動。這些設定是 Azure App Service 設定，不是 GitHub Actions secrets，也不應寫入 workflow 或程式碼。
 

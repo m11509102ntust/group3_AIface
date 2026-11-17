@@ -67,6 +67,30 @@ if (checkinForm) {
 }
 
 if (personForm) {
+  if (personForm.dataset.autoFaceEnroll === "true") {
+    fetch("/api/face/auto-enroll", {
+      method: "POST",
+      headers: { "X-CSRF-Token": personForm.dataset.csrfToken },
+    })
+      .then(async (response) => {
+        const result = await response.json();
+        if (response.status === 409) {
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(result.error || "照片自動建模失敗。");
+        }
+        if (result.enrolled > 0 || result.errors.length > 0) {
+          personStatus.textContent = `照片自動建模完成：${result.enrolled} 人成功。${
+            result.errors.length > 0 ? ` ${result.errors.join("；")}` : ""
+          }`;
+        }
+      })
+      .catch((error) => {
+        personStatus.textContent = error.message;
+      });
+  }
+
   personForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const nameInput = personForm.elements.namedItem("name");

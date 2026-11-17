@@ -9,6 +9,9 @@ const detectionResult = document.getElementById("detection-result");
 
 let cameraStream = null;
 
+if (!cameraFrame) {
+  // This script is shared by pages that do not contain a camera.
+} else {
 function stopCamera() {
   if (cameraStream) {
     cameraStream.getTracks().forEach((track) => track.stop());
@@ -72,17 +75,40 @@ detectButton.addEventListener("click", async () => {
   detectionResult.textContent = "等待人臉偵測服務回應…";
 
   try {
-    const response = await fetch("/api/face/detect", {
+    const mode = cameraFrame.dataset.faceMode || "enroll";
+    const headers = { "Content-Type": "application/json" };
+    const csrfToken =
+      cameraFrame.dataset.csrfToken ||
+      document.getElementById("person-form")?.dataset.csrfToken;
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
+    }
+    const body = { image_base64: imageBase64 };
+    let endpoint = "/api/face/detect";
+    if (mode === "enroll") {
+      endpoint = "/api/face/enroll";
+      body.person_id = Number(
+        document.getElementById("enroll-person-id")?.value,
+      );
+    } else if (mode === "recognize") {
+      endpoint = "/api/face/recognize";
+    }
+    const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_base64: imageBase64 }),
+      headers,
+      body: JSON.stringify(body),
     });
     const result = await response.json();
     if (!response.ok) {
       throw new Error(result.error || "人臉偵測失敗，請稍後重試。");
     }
     detectionResult.textContent = JSON.stringify(result, null, 2);
-    cameraStatus.textContent = "偵測完成。此服務只偵測人臉，不會辨識姓名或進行打卡。";
+    cameraStatus.textContent =
+      mode === "recognize"
+        ? `${result.name} 已完成臉部辨識並打卡。`
+        : mode === "enroll"
+          ? `${result.name} 的人臉模型已建立。`
+          : "偵測完成。";
   } catch (error) {
     cameraStatus.textContent =
       error instanceof TypeError
@@ -95,3 +121,4 @@ detectButton.addEventListener("click", async () => {
 });
 
 window.addEventListener("pagehide", stopCamera);
+}

@@ -2,6 +2,8 @@ import base64
 import binascii
 import hashlib
 import hmac
+import json
+import math
 import os
 import re
 import secrets
@@ -87,6 +89,17 @@ def _connect_db():
         connection.execute("ALTER TABLE people ADD COLUMN pin_salt TEXT")
     if "pin_hash" not in people_columns:
         connection.execute("ALTER TABLE people ADD COLUMN pin_hash TEXT")
+    if "face_embedding" not in people_columns:
+        connection.execute("ALTER TABLE people ADD COLUMN face_embedding TEXT")
+    if "face_enrolled_at" not in people_columns:
+        connection.execute("ALTER TABLE people ADD COLUMN face_enrolled_at TEXT")
+    for legacy_column in ("embedding", "face_encoding", "face_descriptor", "face_vector"):
+        if legacy_column in people_columns:
+            connection.execute(
+                f"UPDATE people SET face_embedding = {legacy_column} "
+                "WHERE face_embedding IS NULL"
+            )
+            break
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS mytable (
@@ -232,6 +245,38 @@ def _allow_face_detection(client_ip):
         return True
 
 
+def _extract_face_embedding(result):
+    """Return a finite numeric embedding from the provider response."""
+    candidates = []
+    if isinstance(result, dict):
+        candidates.append(result)
+        faces = result.get("faces")
+        if isinstance(faces, list):
+            candidates.extend(face for face in faces if isinstance(face, dict))
+    for candidate in candidates:
+        for key in ("embedding", "face_embedding", "encoding", "vector"):
+            value = candidate.get(key)
+            if not isinstance(value, list) or len(value) < 2:
+                continue
+            try:
+                embedding = [float(item) for item in value]
+            except (TypeError, ValueError):
+                continue
+            if all(math.isfinite(item) for item in embedding):
+                return embedding
+    return None
+
+
+def _cosine_similarity(left, right):
+    if len(left) != len(right):
+        return None
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if not left_norm or not right_norm:
+        return None
+    return sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
+
+
 @app.get("/")
 @app.get("/checkin")
 @app.get("/records")
@@ -266,7 +311,8 @@ def index():
                 people = [
                     dict(row)
                     for row in connection.execute(
-                        "SELECT name, pin_hash IS NOT NULL AS has_pin "
+                        "SELECT id, name, pin_hash IS NOT NULL AS has_pin, "
+                        "face_embedding IS NOT NULL AS has_face_model "
                         "FROM people ORDER BY name COLLATE NOCASE"
                     )
                 ]
@@ -635,6 +681,264 @@ def detect_face():
         return jsonify(error="人臉偵測服務回傳了無效資料。"), 502
 
     return jsonify(result)
+
+
+def _request_face_embedding(image_base64):
+    api_key = os.getenv("FACE_DETECT_API_KEY", "").strip()
+    if not api_key:
+        return None, "人臉辨識服務尚未設定 API 金鑰。", 503
+    try:
+        response = requests.post(
+            FACE_DETECT_URL,
+            headers={"x-api-key": api_key},
+            json={"image_base64": image_base64},
+            timeout=(5, 30),
+            allow_redirects=False,
+        )
+    except requests.Timeout:
+        app.logger.warning("Face recognition provider timed out")
+        return None, "人臉辨識服務逾時，請稍後重試。", 504
+    except requests.RequestException as exc:
+        app.logger.warning(
+            "Face recognition provider request failed: %s", type(exc).__name__
+        )
+        return None, "目前無法連線到人臉辨識服務。", 502
+
+    if response.status_code not in (200, 201):
+        app.logger.warning(
+            "Face recognition provider returned HTTP %s", response.status_code
+        )
+        return None, "人臉辨識服務無法處理這張圖片。", 502
+    try:
+        result = response.json()
+    except ValueError:
+        app.logger.warning("Face recognition provider returned invalid JSON")
+        return None, "人臉辨識服務回傳了無效資料。", 502
+
+    embedding = _extract_face_embedding(result)
+    if embedding is None:
+        return (
+            None,
+            "人臉服務未回傳 embedding；目前的 API 只有位置偵測，無法建立或比對模型。",
+            422,
+        )
+    return embedding, None, None
+
+
+def _find_photo_blob_column(connection):
+    photo_columns = {
+        "photo",
+        "photo_blob",
+        "image",
+        "image_blob",
+        "face_photo",
+        "avatar",
+        "picture",
+    }
+    columns = connection.execute("PRAGMA table_info(people)").fetchall()
+    for column in columns:
+        if column["name"].casefold() in photo_columns and column["type"].upper() == "BLOB":
+            return column["name"]
+    return None
+
+
+@app.post("/api/face/enroll")
+@_admin_required
+def enroll_face():
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    person_id = payload.get("person_id")
+    image_base64 = payload.get("image_base64")
+    if not isinstance(person_id, int) or person_id <= 0:
+        return jsonify(error="請選擇有效的人員。"), 400
+    if not isinstance(image_base64, str) or not image_base64:
+        return jsonify(error="請提供 Base64 格式的 image_base64。"), 400
+    if len(image_base64) > ((MAX_IMAGE_BYTES + 2) // 3) * 4:
+        return jsonify(error="圖片大小不可超過 5 MB。"), 413
+    try:
+        image_bytes = base64.b64decode(image_base64, validate=True)
+    except (binascii.Error, ValueError):
+        return jsonify(error="圖片必須是有效的 Base64 編碼。"), 400
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        return jsonify(error="圖片大小不可超過 5 MB。"), 413
+    if not (
+        image_bytes.startswith(b"\xff\xd8\xff")
+        or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    ):
+        return jsonify(error="圖片格式只支援 JPEG 或 PNG。"), 400
+
+    embedding, error, status = _request_face_embedding(image_base64)
+    if error:
+        return jsonify(error=error), status
+    enrolled_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
+    )
+    try:
+        with closing(_connect_db()) as connection:
+            result = connection.execute(
+                "UPDATE people SET face_embedding = ?, face_enrolled_at = ? "
+                "WHERE id = ?",
+                (json.dumps(embedding, separators=(",", ":")), enrolled_at, person_id),
+            )
+            if result.rowcount != 1:
+                return jsonify(error="找不到指定的人員。"), 404
+            person = connection.execute(
+                "SELECT name FROM people WHERE id = ?", (person_id,)
+            ).fetchone()
+            connection.commit()
+    except sqlite3.Error:
+        app.logger.exception("Could not save face embedding")
+        return jsonify(error="人臉模型儲存失敗，請稍後再試。"), 500
+    return jsonify(person_id=person_id, name=person["name"], enrolled_at=enrolled_at)
+
+
+@app.post("/api/face/auto-enroll")
+@_admin_required
+def auto_enroll_faces():
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    try:
+        with closing(_connect_db()) as connection:
+            photo_column = _find_photo_blob_column(connection)
+            if photo_column is None:
+                return jsonify(
+                    error="people 表找不到可用的照片 BLOB 欄位。",
+                    enrolled=0,
+                    skipped=0,
+                ), 409
+            people = connection.execute(
+                f'SELECT id, name, "{photo_column}" AS photo '
+                "FROM people WHERE face_embedding IS NULL "
+                f'AND "{photo_column}" IS NOT NULL'
+            ).fetchall()
+            enrolled = 0
+            skipped = 0
+            errors = []
+            for person in people:
+                image_bytes = person["photo"]
+                if not isinstance(image_bytes, bytes) or not image_bytes:
+                    skipped += 1
+                    continue
+                if len(image_bytes) > MAX_IMAGE_BYTES or not (
+                    image_bytes.startswith(b"\xff\xd8\xff")
+                    or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+                ):
+                    errors.append(f"{person['name']}: 照片格式錯誤或超過 5 MB")
+                    continue
+                image_base64 = base64.b64encode(image_bytes).decode("ascii")
+                embedding, error, _status = _request_face_embedding(image_base64)
+                if error:
+                    errors.append(f"{person['name']}: {error}")
+                    continue
+                enrolled_at = datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                ).replace("+00:00", "Z")
+                connection.execute(
+                    "UPDATE people SET face_embedding = ?, face_enrolled_at = ? "
+                    "WHERE id = ?",
+                    (
+                        json.dumps(embedding, separators=(",", ":")),
+                        enrolled_at,
+                        person["id"],
+                    ),
+                )
+                enrolled += 1
+            connection.commit()
+    except sqlite3.Error:
+        app.logger.exception("Could not auto-enroll face embeddings from SQLite photos")
+        return jsonify(error="從 SQLite 照片建立人臉模型失敗。"), 500
+    return jsonify(
+        enrolled=enrolled,
+        skipped=skipped,
+        errors=errors,
+        photo_column=photo_column,
+    )
+
+
+@app.post("/api/face/recognize")
+def recognize_face():
+    if not _checkin_settings_ready():
+        return jsonify(error="打卡登入尚未完成伺服器設定。"), 503
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    if not _allow_face_detection(request.remote_addr or "unknown"):
+        return jsonify(error="辨識次數過多，請稍後再試。"), 429
+    try:
+        with closing(_connect_db()) as connection:
+            if not _face_detection_enabled(connection):
+                return jsonify(error="人臉辨識功能目前由管理員停用。"), 503
+    except sqlite3.Error:
+        app.logger.exception("Could not load face recognition setting")
+        return jsonify(error="目前無法讀取人臉辨識設定。"), 503
+
+    payload = request.get_json(silent=True)
+    image_base64 = payload.get("image_base64") if isinstance(payload, dict) else None
+    if not isinstance(image_base64, str) or not image_base64:
+        return jsonify(error="請提供 Base64 格式的 image_base64。"), 400
+    if len(image_base64) > ((MAX_IMAGE_BYTES + 2) // 3) * 4:
+        return jsonify(error="圖片大小不可超過 5 MB。"), 413
+    try:
+        image_bytes = base64.b64decode(image_base64, validate=True)
+    except (binascii.Error, ValueError):
+        return jsonify(error="圖片必須是有效的 Base64 編碼。"), 400
+    if len(image_bytes) > MAX_IMAGE_BYTES or not (
+        image_bytes.startswith(b"\xff\xd8\xff")
+        or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    ):
+        return jsonify(error="圖片格式錯誤或大小不可超過 5 MB。"), 400
+
+    embedding, error, status = _request_face_embedding(image_base64)
+    if error:
+        return jsonify(error=error), status
+    try:
+        threshold = float(os.getenv("FACE_RECOGNITION_THRESHOLD", "0.65"))
+    except ValueError:
+        return jsonify(error="FACE_RECOGNITION_THRESHOLD 設定無效。"), 500
+    if not 0 < threshold <= 1:
+        return jsonify(error="FACE_RECOGNITION_THRESHOLD 必須介於 0 與 1。"), 500
+
+    try:
+        with closing(_connect_db()) as connection:
+            candidates = connection.execute(
+                "SELECT id, name, face_embedding FROM people "
+                "WHERE face_embedding IS NOT NULL"
+            ).fetchall()
+            matches = []
+            for candidate in candidates:
+                try:
+                    stored_embedding = json.loads(candidate["face_embedding"])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    app.logger.warning("Ignoring invalid face embedding for person %s", candidate["id"])
+                    continue
+                if not isinstance(stored_embedding, list):
+                    continue
+                similarity = _cosine_similarity(embedding, stored_embedding)
+                if similarity is not None:
+                    matches.append((similarity, candidate))
+            if not matches:
+                return jsonify(error="尚未建立可用的人臉模型。"), 404
+            similarity, person = max(matches, key=lambda match: match[0])
+            if similarity < threshold:
+                return jsonify(error="找不到相符的人員。", similarity=round(similarity, 4)), 404
+            checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+                "+00:00", "Z"
+            )
+            connection.execute(
+                'INSERT INTO mytable (person_id, "姓名", "打卡時間") VALUES (?, ?, ?)',
+                (person["id"], person["name"], checked_at),
+            )
+            connection.commit()
+    except sqlite3.Error:
+        app.logger.exception("Could not recognize face or save SQLite check-in")
+        return jsonify(error="人臉辨識或打卡資料儲存失敗，請稍後再試。"), 500
+    return jsonify(
+        person_id=person["id"],
+        name=person["name"],
+        similarity=round(similarity, 4),
+        checkin_time=checked_at,
+    ), 201
 
 
 @app.errorhandler(413)

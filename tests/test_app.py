@@ -450,6 +450,66 @@ class FaceSenseAppTests(unittest.TestCase):
 
     @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
     @patch("app.requests.post")
+    def test_face_embedding_enrollment_recognizes_and_records_checkin(self, mock_post):
+        self.assertEqual(self._login().status_code, 302)
+        self.assertEqual(self._register_person("王小明", "123456").status_code, 201)
+        provider_response = Mock()
+        provider_response.status_code = 200
+        provider_response.json.return_value = {"faces": [{"embedding": [1.0, 0.0]}]}
+        mock_post.return_value = provider_response
+        image_base64 = base64.b64encode(b"\xff\xd8\xffsample-jpeg").decode("ascii")
+        csrf_token = self._csrf_token()
+
+        response = self.client.post(
+            "/api/face/enroll",
+            json={"person_id": 1, "image_base64": image_base64},
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["name"], "王小明")
+
+        response = self.client.post(
+            "/api/face/recognize",
+            json={"image_base64": image_base64},
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json()["name"], "王小明")
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM mytable").fetchone()[0], 1)
+
+    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    @patch("app.requests.post")
+    def test_sqlite_photo_blob_is_auto_enrolled(self, mock_post):
+        self.assertEqual(self._login().status_code, 302)
+        self.assertEqual(self._register_person("照片人員", "123456").status_code, 201)
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            connection.execute("ALTER TABLE people ADD COLUMN photo BLOB")
+            connection.execute(
+                "UPDATE people SET photo = ? WHERE id = 1",
+                (b"\xff\xd8\xffphoto",),
+            )
+            connection.commit()
+
+        provider_response = Mock()
+        provider_response.status_code = 200
+        provider_response.json.return_value = {"embedding": [0.5, 0.5]}
+        mock_post.return_value = provider_response
+        response = self.client.post(
+            "/api/face/auto-enroll",
+            json={},
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["enrolled"], 1)
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            embedding = connection.execute(
+                "SELECT face_embedding FROM people WHERE id = 1"
+            ).fetchone()[0]
+        self.assertEqual(embedding, "[0.5,0.5]")
+
+    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    @patch("app.requests.post")
     def test_face_detection_rejects_invalid_image_data(self, mock_post):
         response = self.client.post(
             "/api/face/detect",
