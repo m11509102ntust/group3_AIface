@@ -453,6 +453,7 @@ class FaceSenseAppTests(unittest.TestCase):
         {
             "AZURE_FACE_ENDPOINT": "https://facesense.cognitiveservices.azure.com",
             "AZURE_FACE_KEY": "azure-test-key",
+            "FACE_RECOGNITION_PROVIDER": "azure",
         },
     )
     @patch("app.requests.request")
@@ -482,7 +483,13 @@ class FaceSenseAppTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(stored[0], "azure-person-1")
 
-    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    @patch.dict(
+        os.environ,
+        {
+            "FACE_DETECT_API_KEY": "server-only-test-key",
+            "FACE_RECOGNITION_PROVIDER": "embedding",
+        },
+    )
     @patch("app.requests.post")
     def test_face_embedding_enrollment_recognizes_and_records_checkin(self, mock_post):
         self.assertEqual(self._login().status_code, 302)
@@ -512,7 +519,13 @@ class FaceSenseAppTests(unittest.TestCase):
         with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM mytable").fetchone()[0], 1)
 
-    @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
+    @patch.dict(
+        os.environ,
+        {
+            "FACE_DETECT_API_KEY": "server-only-test-key",
+            "FACE_RECOGNITION_PROVIDER": "embedding",
+        },
+    )
     @patch("app.requests.post")
     def test_sqlite_photo_blob_is_auto_enrolled(self, mock_post):
         self.assertEqual(self._login().status_code, 302)

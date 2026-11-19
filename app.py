@@ -1012,7 +1012,7 @@ def enroll_face():
         return jsonify(error="圖片格式只支援 JPEG 或 PNG。"), 400
 
     provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
-    if provider == "local":
+    if provider == "local" and not _azure_face_configured():
         if not _local_face_available():
             return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
         face, face_error = _extract_local_face(image_bytes)
@@ -1119,7 +1119,7 @@ def auto_enroll_faces():
     if not _csrf_is_valid():
         return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
     provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
-    if provider == "local":
+    if provider == "local" and not _azure_face_configured():
         if not _local_face_available():
             return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
         try:
@@ -1293,7 +1293,7 @@ def recognize_face():
         return jsonify(error="圖片格式錯誤或大小不可超過 5 MB。"), 400
 
     provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
-    if provider == "local":
+    if provider == "local" and not _azure_face_configured():
         if not _local_face_available():
             return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
         face, face_error = _extract_local_face(image_bytes)
