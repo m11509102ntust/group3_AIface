@@ -1052,6 +1052,37 @@ def create_face_enrollment_request():
     content_type = "image/jpeg" if image_bytes.startswith(b"\xff\xd8\xff") else "image/png"
     try:
         with closing(_connect_db()) as connection:
+            if _local_face_available():
+                    candidate, candidate_error = _extract_local_face(image_bytes)
+                    model_dir = _local_model_dir()
+                    model_path = model_dir / "lbph-model.yml"
+                    labels_path = model_dir / "lbph-labels.json"
+                    if not candidate_error and model_path.exists() and labels_path.exists():
+                        try:
+                            mapping = json.loads(labels_path.read_text(encoding="utf-8"))
+                            recognizer = cv2.face.LBPHFaceRecognizer_create()
+                            recognizer.read(str(model_path))
+                            label, distance = recognizer.predict(candidate)
+                            threshold = float(os.getenv("LOCAL_FACE_DISTANCE_THRESHOLD", "75"))
+                            person_info = mapping.get(str(label))
+                            if person_info is not None and distance <= threshold:
+                                cropped_face, crop_error = _encode_cropped_face(image_bytes)
+                                if crop_error:
+                                    return jsonify(error=crop_error), 422
+                                connection.execute(
+                                    "UPDATE people SET face_image = ?, face_enrolled_at = ? "
+                                    "WHERE id = ?",
+                                    (cropped_face, created_at, person_info["id"]),
+                                )
+                                connection.commit()
+                                _train_local_face_model()
+                                return jsonify(
+                                    status="already-enrolled",
+                                    person_id=person_info["id"],
+                                    name=person_info["name"],
+                                ), 200
+                        except (OSError, ValueError, json.JSONDecodeError, cv2.error):
+                            app.logger.exception("Could not match pending face to registered model")
             cursor = connection.execute(
                 "INSERT INTO face_enrollment_requests "
                 "(image, content_type, created_at, consented_at) "
@@ -1127,6 +1158,33 @@ def approve_face_enrollment_request(request_id):
             ).fetchone()
             if pending is None:
                 return jsonify(error="找不到此建檔申請。"), 404
+            existing_person = connection.execute(
+                "SELECT id, name FROM people WHERE name = ? COLLATE NOCASE", (name,)
+            ).fetchone()
+            if existing_person is not None:
+                existing_name = existing_person["name"]
+                cropped_face, face_error = _encode_cropped_face(pending["image"])
+                if face_error:
+                    return jsonify(error=face_error), 422
+                enrolled_at = datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                ).replace("+00:00", "Z")
+                connection.execute(
+                    "UPDATE people SET face_image = ?, face_enrolled_at = ? "
+                    "WHERE id = ?",
+                    (cropped_face, enrolled_at, existing_person["id"]),
+                )
+                connection.execute(
+                    "DELETE FROM face_enrollment_requests WHERE id = ?", (request_id,)
+                )
+                connection.commit()
+                _train_local_face_model()
+                return jsonify(
+                    person_id=existing_person["id"],
+                    name=existing_name,
+                    provider="local-lbph",
+                    status="updated-existing",
+                ), 200
             if connection.execute(
                 "SELECT 1 FROM people WHERE name = ? COLLATE NOCASE", (name,)
             ).fetchone():
