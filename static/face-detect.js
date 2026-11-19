@@ -139,9 +139,9 @@ detectButton.addEventListener("click", async () => {
   detectButton.disabled = true;
   cameraStatus.textContent = "正在分析影像…";
   detectionResult.textContent = "等待人臉偵測服務回應…";
+  let mode = cameraFrame.dataset.faceMode || "enroll";
 
   try {
-    const mode = cameraFrame.dataset.faceMode || "enroll";
     const headers = { "Content-Type": "application/json" };
     const csrfToken =
       cameraFrame.dataset.csrfToken ||
@@ -168,7 +168,8 @@ detectButton.addEventListener("click", async () => {
     if (
       !response.ok &&
       mode === "recognize" &&
-      (response.status === 404 || response.status === 422)
+      response.status !== 429 &&
+      response.status !== 503
     ) {
       detectionResult.textContent = result.error || "找不到相符的人員。";
       detectButton.disabled = false;
@@ -191,6 +192,16 @@ detectButton.addEventListener("click", async () => {
       cameraStatus.textContent = "偵測完成。";
     }
   } catch (error) {
+    if (
+      mode === "recognize" &&
+      error instanceof Error &&
+      !error.message.includes("辨識次數過多")
+    ) {
+      detectionResult.textContent =
+        error.message || "辨識失敗，準備倒數拍照建檔。";
+      await countdownCapture(5);
+      return;
+    }
     cameraStatus.textContent =
       error instanceof TypeError
         ? "無法連線至網站，請檢查網路後重試。"

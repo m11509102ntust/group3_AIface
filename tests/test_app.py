@@ -114,7 +114,8 @@ class FaceSenseAppTests(unittest.TestCase):
         js = Path("static/face-detect.js").read_text(encoding="utf-8")
         self.assertIn("拍照完成", js)
         self.assertIn("模型建立完成", js)
-        self.assertIn("response.status === 422", js)
+        self.assertIn("response.status !== 429", js)
+        self.assertIn("await countdownCapture(5)", js)
 
     def test_dashboard_metrics_use_real_attendance_and_are_private(self):
         self.assertEqual(self._login().status_code, 302)
