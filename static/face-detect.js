@@ -27,10 +27,17 @@ async function countdownCapture(seconds = 5) {
   }
 
   const maxDimension = 1024;
+  setCameraCountdown(`${seconds}`, true);
+  cameraStatus.textContent = `辨識失敗，倒數拍照建模：剩餘 ${seconds} 秒`;
   for (let remaining = seconds; remaining > 0; remaining -= 1) {
     cameraStatus.textContent = `辨識失敗，倒數拍照建模：剩餘 ${remaining} 秒`;
     setCameraCountdown(`${remaining}`);
     await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+  if (!cameraStream || !video.videoWidth || !video.videoHeight) {
+    cameraStatus.textContent = "倒數結束前攝影機已停止，未拍照。";
+    setCameraCountdown("", false);
+    return;
   }
 
   const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
@@ -158,8 +165,13 @@ detectButton.addEventListener("click", async () => {
       body: JSON.stringify(body),
     });
     const result = await response.json();
-    if (!response.ok && mode === "recognize" && response.status === 404) {
+    if (
+      !response.ok &&
+      mode === "recognize" &&
+      (response.status === 404 || response.status === 422)
+    ) {
       detectionResult.textContent = result.error || "找不到相符的人員。";
+      detectButton.disabled = false;
       await countdownCapture(5);
       return;
     }
@@ -167,12 +179,17 @@ detectButton.addEventListener("click", async () => {
       throw new Error(result.error || "人臉偵測失敗，請稍後重試。");
     }
     detectionResult.textContent = JSON.stringify(result, null, 2);
-    cameraStatus.textContent =
-      mode === "recognize"
-        ? `${result.name} 已完成臉部辨識並打卡。`
-        : mode === "enroll"
-          ? `${result.name} 的人臉模型已建立。`
-          : "偵測完成。";
+    if (mode === "recognize") {
+      cameraStatus.textContent =
+        `辨識成功：${result.name} 已完成臉部辨識並打卡。`;
+    } else if (mode === "enroll") {
+      setCameraCountdown("模型建立完成", true);
+      setTimeout(() => setCameraCountdown("", false), 2500);
+      cameraStatus.textContent =
+        `模型建立完成：${result.name} 的人臉模型已建立，可用於下次辨識。`;
+    } else {
+      cameraStatus.textContent = "偵測完成。";
+    }
   } catch (error) {
     cameraStatus.textContent =
       error instanceof TypeError
