@@ -19,6 +19,13 @@ from pathlib import Path
 import requests
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
+try:
+    import cv2
+    import numpy as np
+except ImportError:
+    cv2 = None
+    np = None
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 7 * 1024 * 1024
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or None
@@ -97,6 +104,8 @@ def _connect_db():
         connection.execute("ALTER TABLE people ADD COLUMN face_enrolled_at TEXT")
     if "azure_person_id" not in people_columns:
         connection.execute("ALTER TABLE people ADD COLUMN azure_person_id TEXT")
+    if "face_image" not in people_columns:
+        connection.execute("ALTER TABLE people ADD COLUMN face_image BLOB")
     for legacy_column in ("embedding", "face_encoding", "face_descriptor", "face_vector"):
         if legacy_column in people_columns:
             connection.execute(
@@ -281,6 +290,69 @@ def _cosine_similarity(left, right):
     return sum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
 
 
+def _local_face_available():
+    return cv2 is not None and np is not None
+
+
+def _local_model_dir():
+    if os.getenv("WEBSITE_SITE_NAME"):
+        model_dir = Path(os.getenv("HOME", r"D:\home")) / "data" / "facesense"
+    else:
+        model_dir = Path(app.instance_path) / "facesense"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    return model_dir
+
+
+def _extract_local_face(image_bytes):
+    if not _local_face_available():
+        return None, "本機人臉辨識元件尚未安裝。請安裝 numpy 與 opencv-contrib-python。"
+    array = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(array, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return None, "照片無法解碼。"
+    image = cv2.equalizeHist(image)
+    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    detector = cv2.CascadeClassifier(cascade_path)
+    faces = detector.detectMultiScale(image, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+    if len(faces) != 1:
+        return None, "畫面必須且只能包含一張清楚的人臉。"
+    x, y, width, height = max(faces, key=lambda face: face[2] * face[3])
+    face = cv2.resize(image[y:y + height, x:x + width], (200, 200))
+    return face, None
+
+
+def _train_local_face_model():
+    if not _local_face_available():
+        return None, "本機人臉辨識元件尚未安裝。"
+    with closing(_connect_db()) as connection:
+        people = connection.execute(
+            "SELECT id, name, face_image FROM people "
+            "WHERE face_image IS NOT NULL"
+        ).fetchall()
+    faces = []
+    labels = []
+    mapping = {}
+    for person in people:
+        face, error = _extract_local_face(person["face_image"])
+        if error:
+            continue
+        label = len(mapping)
+        mapping[str(label)] = {"id": person["id"], "name": person["name"]}
+        faces.append(face)
+        labels.append(label)
+    if not faces:
+        return None, "尚未建立可用的人臉模型。"
+    recognizer = cv2.face.LBPHFaceRecognizer_create()
+    recognizer.train(faces, np.asarray(labels, dtype=np.int32))
+    model_dir = _local_model_dir()
+    recognizer.save(str(model_dir / "lbph-model.yml"))
+    (model_dir / "lbph-labels.json").write_text(
+        json.dumps(mapping, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return mapping, None
+
+
 @app.get("/")
 @app.get("/checkin")
 @app.get("/records")
@@ -293,7 +365,14 @@ def index():
     )
     flask_secret_configured = bool(app.secret_key)
     checkin_configured = checkin_password_configured and flask_secret_configured
-    face_detection_configured = bool(os.getenv("FACE_DETECT_API_KEY", "").strip())
+    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
+    face_detection_configured = (
+        provider == "local"
+        and _local_face_available()
+    ) or bool(
+        os.getenv("FACE_DETECT_API_KEY", "").strip()
+        or _azure_face_configured()
+    )
     face_detection_enabled = True
     admin_authenticated = bool(
         checkin_configured and session.get("checkin_admin_authenticated")
@@ -932,6 +1011,43 @@ def enroll_face():
     ):
         return jsonify(error="圖片格式只支援 JPEG 或 PNG。"), 400
 
+    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
+    if provider == "local":
+        if not _local_face_available():
+            return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
+        face, face_error = _extract_local_face(image_bytes)
+        if face_error:
+            return jsonify(error=face_error), 422
+        enrolled_at = datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        ).replace("+00:00", "Z")
+        try:
+            with closing(_connect_db()) as connection:
+                person = connection.execute(
+                    "SELECT id, name FROM people WHERE id = ?",
+                    (person_id,),
+                ).fetchone()
+                if person is None:
+                    return jsonify(error="找不到指定的人員。"), 404
+                connection.execute(
+                    "UPDATE people SET face_image = ?, face_enrolled_at = ? "
+                    "WHERE id = ?",
+                    (image_bytes, enrolled_at, person_id),
+                )
+                connection.commit()
+            mapping, train_error = _train_local_face_model()
+            if train_error:
+                return jsonify(error=train_error), 422
+        except sqlite3.Error:
+            app.logger.exception("Could not save local face model")
+            return jsonify(error="本機人臉模型儲存失敗，請稍後再試。"), 500
+        return jsonify(
+            person_id=person_id,
+            name=person["name"],
+            enrolled_at=enrolled_at,
+            provider="local-lbph",
+        )
+
     if _azure_face_configured():
         try:
             with closing(_connect_db()) as connection:
@@ -1002,6 +1118,38 @@ def enroll_face():
 def auto_enroll_faces():
     if not _csrf_is_valid():
         return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
+    if provider == "local":
+        if not _local_face_available():
+            return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
+        try:
+            with closing(_connect_db()) as connection:
+                eligible = connection.execute(
+                    "SELECT id, name FROM people WHERE face_image IS NOT NULL"
+                ).fetchall()
+                for person in eligible:
+                    connection.execute(
+                        "UPDATE people SET face_enrolled_at = COALESCE("
+                        "face_enrolled_at, ?) WHERE id = ?",
+                        (
+                            datetime.now(timezone.utc).isoformat(
+                                timespec="seconds"
+                            ).replace("+00:00", "Z"),
+                            person["id"],
+                        ),
+                    )
+                connection.commit()
+            mapping, train_error = _train_local_face_model()
+            if train_error:
+                return jsonify(error=train_error, enrolled=0, skipped=0, errors=[]), 422
+            return jsonify(
+                enrolled=len(mapping),
+                skipped=max(0, len(eligible) - len(mapping)),
+                errors=[],
+            )
+        except sqlite3.Error:
+            app.logger.exception("Could not auto-train local LBPH face model")
+            return jsonify(error="本機人臉模型訓練失敗。"), 500
     if _azure_face_configured():
         try:
             with closing(_connect_db()) as connection:
@@ -1143,6 +1291,60 @@ def recognize_face():
         or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
     ):
         return jsonify(error="圖片格式錯誤或大小不可超過 5 MB。"), 400
+
+    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
+    if provider == "local":
+        if not _local_face_available():
+            return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
+        face, face_error = _extract_local_face(image_bytes)
+        if face_error:
+            return jsonify(error=face_error), 422
+        model_dir = _local_model_dir()
+        model_path = model_dir / "lbph-model.yml"
+        labels_path = model_dir / "lbph-labels.json"
+        if not model_path.exists() or not labels_path.exists():
+            return jsonify(error="尚未建立可用的人臉模型。"), 404
+        try:
+            threshold = float(os.getenv("LOCAL_FACE_DISTANCE_THRESHOLD", "75"))
+        except ValueError:
+            return jsonify(error="LOCAL_FACE_DISTANCE_THRESHOLD 設定無效。"), 500
+        try:
+            mapping = json.loads(labels_path.read_text(encoding="utf-8"))
+            recognizer = cv2.face.LBPHFaceRecognizer_create()
+            recognizer.read(str(model_path))
+            label, distance = recognizer.predict(face)
+            person_info = mapping.get(str(label))
+            if person_info is None or distance > threshold:
+                return jsonify(
+                    error="找不到相符的人員。",
+                    distance=round(float(distance), 4),
+                ), 404
+            checked_at = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ).replace("+00:00", "Z")
+            with closing(_connect_db()) as connection:
+                person = connection.execute(
+                    "SELECT id, name FROM people WHERE id = ?",
+                    (person_info["id"],),
+                ).fetchone()
+                if person is None:
+                    return jsonify(error="辨識結果不在目前人員名冊中。"), 404
+                connection.execute(
+                    'INSERT INTO mytable (person_id, "姓名", "打卡時間") '
+                    "VALUES (?, ?, ?)",
+                    (person["id"], person["name"], checked_at),
+                )
+                connection.commit()
+            return jsonify(
+                person_id=person["id"],
+                name=person["name"],
+                distance=round(float(distance), 4),
+                checkin_time=checked_at,
+                provider="local-lbph",
+            ), 201
+        except (OSError, ValueError, json.JSONDecodeError):
+            app.logger.exception("Could not use local LBPH face model")
+            return jsonify(error="本機人臉辨識模型無法讀取或執行。"), 500
 
     if _azure_face_configured():
         try:

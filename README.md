@@ -77,6 +77,24 @@ $env:FACE_DETECT_API_KEY = "由服務供應商簽發的有效金鑰"
 python app.py
 ```
 
+## 使用 Python 本機訓練（不需要 Azure）
+
+預設 `FACE_RECOGNITION_PROVIDER=local`，使用 OpenCV LBPH 模型，不需要任何雲端 API 金鑰：
+
+```powershell
+pip install -r requirements.txt
+$env:FACE_RECOGNITION_PROVIDER = "local"
+$env:LOCAL_FACE_DISTANCE_THRESHOLD = "75"
+python app.py
+```
+
+管理員透過「建立人臉模型」拍照後，照片會存入 SQLite `people.face_image`，伺服器會依目前所有已建檔照片重訓 LBPH 模型並寫入持久目錄：
+
+- 本機：專案 `instance/facesense/lbph-model.yml`
+- Azure：`D:\home\data\facesense\lbph-model.yml`
+
+辨識時畫面需只有一張清楚正面人臉。LBPH 距離越小越相似，預設門檻為 75，可透過 `LOCAL_FACE_DISTANCE_THRESHOLD`調整；此方案是本機古典人臉辨識，不是 embedding 模型。若需要 embedding 或較高精準度，再改用 InsightFace 或 DeepFace。
+
 部署到 Azure 前，請在 Azure Portal 的 Web App → **Settings → Environment variables** 加入 `FACE_DETECT_API_KEY`，儲存後確認應用程式已重新啟動。任何曾貼到聊天、提交到 Git 或其他不受信任位置的金鑰都應先撤銷，再使用新金鑰。
 
 ## 部署到 Azure Web App
