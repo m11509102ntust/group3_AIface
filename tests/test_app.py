@@ -457,7 +457,10 @@ class FaceSenseAppTests(unittest.TestCase):
         )
         self.assertNotIn("server-only-test-key", response.get_data(as_text=True))
 
-    @patch("app._extract_local_face", return_value=(object(), None))
+    @patch(
+        "app._encode_cropped_face",
+        return_value=(b"\xff\xd8\xffcropped-face", None),
+    )
     @patch("app._train_local_face_model", return_value=({"0": {"id": 1, "name": "王小明"}}, None))
     def test_face_enrollment_request_requires_admin_approval(
         self,
