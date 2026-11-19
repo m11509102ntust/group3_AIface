@@ -387,6 +387,7 @@ def _train_local_face_model():
 @app.get("/registered")
 @app.get("/settings")
 def index():
+    page = request.path.strip("/") or "overview"
     checkin_password_configured = bool(
         os.getenv("CHECKIN_ADMIN_PASSWORD", "").strip()
     )
@@ -504,7 +505,6 @@ def index():
         database_ready = False
         database_error = "無法讀取打卡資料庫，請稍後再試。"
 
-    page = request.path.strip("/") or "overview"
     if page in {"people", "settings"} and not admin_authenticated:
         return redirect("/")
 
