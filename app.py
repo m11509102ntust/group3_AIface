@@ -17,7 +17,7 @@ from functools import wraps
 from pathlib import Path
 
 import requests
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 
 try:
     import cv2
@@ -128,6 +128,17 @@ def _connect_db():
         CREATE TABLE IF NOT EXISTS app_settings (
             name TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS face_enrollment_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image BLOB NOT NULL,
+            content_type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            consented_at TEXT
         )
         """
     )
@@ -380,6 +391,7 @@ def index():
     employee_id = session.get("checkin_person_id") if checkin_configured else None
     employee_authenticated = isinstance(employee_id, int)
     people = []
+    face_enrollment_requests = []
     checkins = []
     employee_name = None
     database_error = None
@@ -397,6 +409,13 @@ def index():
                         "SELECT id, name, pin_hash IS NOT NULL AS has_pin, "
                         "face_embedding IS NOT NULL AS has_face_model "
                         "FROM people ORDER BY name COLLATE NOCASE"
+                    )
+                ]
+                face_enrollment_requests = [
+                    dict(row)
+                    for row in connection.execute(
+                        "SELECT id, created_at FROM face_enrollment_requests "
+                        "ORDER BY id"
                     )
                 ]
             if employee_authenticated:
@@ -478,6 +497,7 @@ def index():
         dashboard_metrics=dashboard_metrics,
         csrf_token=_csrf_token() if checkin_configured else "",
         people=people,
+        face_enrollment_requests=face_enrollment_requests,
         checkins=checkins,
         database_error=database_error,
     )
@@ -982,6 +1002,137 @@ def _find_photo_blob_column(connection):
         if column["name"].casefold() in photo_columns and column["type"].upper() == "BLOB":
             return column["name"]
     return None
+
+
+@app.post("/api/face/enrollment-requests")
+def create_face_enrollment_request():
+    if not _checkin_settings_ready():
+        return jsonify(error="打卡登入尚未完成伺服器設定。"), 503
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    image_base64 = payload.get("image_base64")
+    try:
+        image_bytes = base64.b64decode(image_base64, validate=True) if isinstance(image_base64, str) else None
+    except (binascii.Error, ValueError):
+        image_bytes = None
+    if not image_bytes or len(image_bytes) > MAX_IMAGE_BYTES or not (
+        image_bytes.startswith(b"\xff\xd8\xff")
+        or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    ):
+        return jsonify(error="照片格式錯誤或大小不可超過 5 MB。"), 400
+    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    content_type = "image/jpeg" if image_bytes.startswith(b"\xff\xd8\xff") else "image/png"
+    try:
+        with closing(_connect_db()) as connection:
+            cursor = connection.execute(
+                "INSERT INTO face_enrollment_requests "
+                "(image, content_type, created_at, consented_at) "
+                "VALUES (?, ?, ?, NULL)",
+                (image_bytes, content_type, created_at),
+            )
+            connection.commit()
+        return jsonify(request_id=cursor.lastrowid, status="pending"), 202
+    except sqlite3.Error:
+        app.logger.exception("Could not save face enrollment request")
+        return jsonify(error="無法提交待審人臉照片，請稍後再試。"), 500
+
+
+@app.get("/api/face/enrollment-requests/<int:request_id>/photo")
+@_admin_required
+def face_enrollment_request_photo(request_id):
+    try:
+        with closing(_connect_db()) as connection:
+            photo = connection.execute(
+                "SELECT image, content_type FROM face_enrollment_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+    except sqlite3.Error:
+        app.logger.exception("Could not read face enrollment request photo")
+        return jsonify(error="無法讀取待審照片。"), 500
+    if photo is None:
+        return jsonify(error="找不到此建檔申請。"), 404
+    return Response(
+        photo["image"],
+        mimetype=photo["content_type"],
+        headers={"Cache-Control": "no-store, private"},
+    )
+
+
+@app.post("/api/face/enrollment-requests/<int:request_id>/approve")
+@_admin_required
+def approve_face_enrollment_request(request_id):
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    name = _normalize_name(payload.get("name", "")) if isinstance(payload.get("name"), str) else ""
+    pin = payload.get("pin")
+    if not name or len(name) > 80:
+        return jsonify(error="請輸入有效的人員姓名。"), 400
+    if not isinstance(pin, str) or not PIN_PATTERN.fullmatch(pin):
+        return jsonify(error="PIN 必須為 6 至 12 位數字。"), 400
+    try:
+        with closing(_connect_db()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            pending = connection.execute(
+                "SELECT * FROM face_enrollment_requests WHERE id = ?", (request_id,)
+            ).fetchone()
+            if pending is None:
+                return jsonify(error="找不到此建檔申請。"), 404
+            if connection.execute(
+                "SELECT 1 FROM people WHERE name = ? COLLATE NOCASE", (name,)
+            ).fetchone():
+                return jsonify(error="此姓名已登記，請使用既有人員。"), 409
+            face, face_error = _extract_local_face(pending["image"])
+            if face_error:
+                return jsonify(error=face_error), 422
+            salt, pin_hash = _hash_pin(pin)
+            created_at = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ).replace("+00:00", "Z")
+            cursor = connection.execute(
+                "INSERT INTO people "
+                "(name, pin_salt, pin_hash, face_image, face_enrolled_at, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (name, salt, pin_hash, pending["image"], created_at, created_at),
+            )
+            connection.execute(
+                "DELETE FROM face_enrollment_requests WHERE id = ?", (request_id,)
+            )
+            connection.commit()
+        mapping, train_error = _train_local_face_model()
+        if train_error:
+            return jsonify(error=train_error), 422
+        return jsonify(
+            person_id=cursor.lastrowid,
+            name=name,
+            provider="local-lbph",
+            status="approved",
+        ), 201
+    except sqlite3.Error:
+        app.logger.exception("Could not approve face enrollment request")
+        return jsonify(error="核准人臉建檔失敗，申請仍保留待審。"), 500
+
+
+@app.delete("/api/face/enrollment-requests/<int:request_id>")
+@_admin_required
+def reject_face_enrollment_request(request_id):
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    try:
+        with closing(_connect_db()) as connection:
+            cursor = connection.execute(
+                "DELETE FROM face_enrollment_requests WHERE id = ?", (request_id,)
+            )
+            connection.commit()
+    except sqlite3.Error:
+        app.logger.exception("Could not reject face enrollment request")
+        return jsonify(error="拒絕申請失敗，請稍後再試。"), 500
+    if cursor.rowcount == 0:
+        return jsonify(error="找不到此建檔申請。"), 404
+    return jsonify(deleted=True)
 
 
 @app.post("/api/face/enroll")

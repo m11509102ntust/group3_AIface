@@ -63,7 +63,7 @@
           </section>
           <p class="empty-state">登入後即可查看已儲存的打卡紀錄。</p>
         {% elif page == "checkin" %}
-          <section class="checkin-grid single-checkin-grid"><article class="panel"><div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>我要打卡</h2></div></div>{% if employee_authenticated %}<p class="form-description">目前登入人員：<strong>{{ employee_name }}</strong></p><form class="checkin-form" id="checkin-form" data-csrf-token="{{ csrf_token }}"><button class="camera-button primary-camera-button" type="submit">記錄我的打卡</button></form><p class="checkin-status" id="checkin-status" role="status" aria-live="polite">可使用 PIN 登入後直接打卡。</p>{% elif checkin_configured %}<p class="form-description">請使用攝影機辨識已建檔人員，辨識成功後會直接記錄打卡。</p><div class="camera-frame" id="camera-frame" data-face-mode="recognize" data-csrf-token="{{ csrf_token }}"><div class="camera-grid"></div><div class="camera-placeholder" id="camera-placeholder">啟動攝影機後，按「辨識並打卡」</div><video id="camera-video" autoplay muted playsinline aria-label="攝影機即時畫面"></video><canvas id="detection-canvas" hidden aria-hidden="true"></canvas><span class="camera-meta">影像只用於本次辨識，不儲存照片</span></div><div class="camera-controls"><button class="camera-button primary-camera-button" id="start-camera" type="button">啟動攝影機</button><button class="camera-button" id="detect-face" type="button" disabled>辨識並打卡</button><button class="camera-button" id="stop-camera" type="button" disabled>停止攝影機</button></div><p class="camera-status" id="camera-status" role="status" aria-live="polite">攝影機尚未啟動。</p><pre class="detection-result" id="detection-result" aria-live="polite">辨識結果會顯示在這裡。</pre>{% else %}<p class="notice error-notice">打卡登入尚未完成伺服器設定。</p>{% endif %}</article></section>
+          <section class="checkin-grid single-checkin-grid"><article class="panel"><div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>我要打卡</h2></div></div>{% if employee_authenticated %}<p class="form-description">目前登入人員：<strong>{{ employee_name }}</strong></p><form class="checkin-form" id="checkin-form" data-csrf-token="{{ csrf_token }}"><button class="camera-button primary-camera-button" type="submit">記錄我的打卡</button></form><p class="checkin-status" id="checkin-status" role="status" aria-live="polite">可使用 PIN 登入後直接打卡。</p>{% elif checkin_configured %}<p class="form-description">請使用攝影機辨識已建檔人員。辨識失敗時會倒數拍照，並提交管理員審核；核准後才建立下次辨識模型。</p><div class="camera-frame" id="camera-frame" data-face-mode="recognize" data-csrf-token="{{ csrf_token }}"><div class="camera-grid"></div><div class="camera-placeholder" id="camera-placeholder">啟動攝影機後，按「辨識並打卡」</div><video id="camera-video" autoplay muted playsinline aria-label="攝影機即時畫面"></video><canvas id="detection-canvas" hidden aria-hidden="true"></canvas><span class="camera-meta">辨識失敗時倒數拍照，照片不會直接建立模型</span></div><div class="camera-controls"><button class="camera-button primary-camera-button" id="start-camera" type="button">啟動攝影機</button><button class="camera-button" id="detect-face" type="button" disabled>辨識並打卡</button><button class="camera-button" id="stop-camera" type="button" disabled>停止攝影機</button></div><p class="camera-status" id="camera-status" role="status" aria-live="polite">攝影機尚未啟動。</p><pre class="detection-result" id="detection-result" aria-live="polite">辨識結果會顯示在這裡。</pre>{% else %}<p class="notice error-notice">打卡登入尚未完成伺服器設定。</p>{% endif %}</article></section>
         {% elif page == "records" %}
           <section class="content-grid records-page"><article class="panel activity-panel"><div class="panel-header"><div><span class="section-label">RECENT CHECK-INS</span><h2>打卡紀錄</h2></div></div>{% if not (admin_authenticated or employee_authenticated) %}<p class="empty-state">登入後即可查看已儲存的打卡紀錄。</p>{% elif checkins %}<div class="table-scroll"><table class="checkin-table"><thead><tr><th>姓名</th><th>打卡時間（本地時區）</th></tr></thead><tbody id="checkin-records">{% for checkin in checkins %}<tr><td>{{ checkin.name }}</td><td><time data-utc-time="{{ checkin.checkin_time }}">{{ checkin.checkin_time }}</time></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="empty-state">目前沒有打卡紀錄。</p>{% endif %}</article></section>
         {% elif page == "people" %}
@@ -78,6 +78,27 @@
                 <button class="camera-button primary-camera-button" type="submit">新增人員／重設 PIN</button>
               </form>
               <p class="checkin-status" id="person-status" role="status" aria-live="polite">PIN 只會以雜湊形式儲存。</p>
+            </article>
+            <article class="panel" id="face-enrollment-requests">
+              <div class="panel-header"><div><span class="section-label">PENDING FACE ENROLLMENT</span><h2>待審人臉建檔</h2></div></div>
+              {% if face_enrollment_requests %}
+                <ul class="pending-face-list" id="pending-face-list" data-csrf-token="{{ csrf_token }}">
+                  {% for pending in face_enrollment_requests %}
+                    <li data-request-id="{{ pending.id }}">
+                      <img src="{{ url_for('face_enrollment_request_photo', request_id=pending.id) }}" alt="待審人臉照片">
+                      <label>人員姓名<input class="pending-face-name" type="text" maxlength="80" autocomplete="name"></label>
+                      <label>個人 PIN<input class="pending-face-pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12"></label>
+                      <div class="camera-controls">
+                        <button class="camera-button primary-camera-button approve-face-request" type="button">核准並建立模型</button>
+                        <button class="camera-button reject-face-request" type="button">拒絕申請</button>
+                      </div>
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <p class="empty-state">目前沒有待審人臉照片。</p>
+              {% endif %}
+              <p class="checkin-status" id="face-request-status" role="status" aria-live="polite"></p>
             </article>
             <article class="panel recognition-panel">
               <div class="panel-header"><div><span class="section-label">LIVE FACE DETECTION</span><h2>人員／人臉建檔</h2></div><span class="live-pill"><i></i> CAMERA</span></div>

@@ -8,6 +8,49 @@ const cameraStatus = document.getElementById("camera-status");
 const detectionResult = document.getElementById("detection-result");
 
 let cameraStream = null;
+let fallbackEnrollmentImageBase64 = null;
+
+async function countdownCapture(seconds = 5) {
+  if (!cameraStream || !video.videoWidth || !video.videoHeight) {
+    cameraStatus.textContent = "攝影機畫面尚未就緒，無法拍照建模。";
+    return;
+  }
+
+  const maxDimension = 1024;
+  for (let remaining = seconds; remaining > 0; remaining -= 1) {
+    cameraStatus.textContent = `辨識失敗，倒數拍照建模：${remaining} 秒`;
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+
+  const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  fallbackEnrollmentImageBase64 =
+    canvas.toDataURL("image/jpeg", 0.85).split(",", 2)[1];
+  try {
+    const response = await fetch("/api/face/enrollment-requests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": cameraFrame.dataset.csrfToken,
+      },
+      body: JSON.stringify({ image_base64: fallbackEnrollmentImageBase64 }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "待審照片提交失敗。");
+    }
+    fallbackEnrollmentImageBase64 = null;
+    cameraStatus.textContent =
+      "照片已提交管理員審核；核准並建立人員後才會啟用下次辨識。";
+  } catch (error) {
+    cameraStatus.textContent =
+      error instanceof TypeError
+        ? "無法連線至網站，請檢查網路後重試。"
+        : error.message;
+  }
+}
 
 if (!cameraFrame) {
   // This script is shared by pages that do not contain a camera.
@@ -99,6 +142,11 @@ detectButton.addEventListener("click", async () => {
       body: JSON.stringify(body),
     });
     const result = await response.json();
+    if (!response.ok && mode === "recognize" && response.status === 404) {
+      detectionResult.textContent = result.error || "找不到相符的人員。";
+      await countdownCapture(5);
+      return;
+    }
     if (!response.ok) {
       throw new Error(result.error || "人臉偵測失敗，請稍後重試。");
     }

@@ -448,6 +448,38 @@ class FaceSenseAppTests(unittest.TestCase):
         )
         self.assertNotIn("server-only-test-key", response.get_data(as_text=True))
 
+    @patch("app._extract_local_face", return_value=(object(), None))
+    @patch("app._train_local_face_model", return_value=({"0": {"id": 1, "name": "王小明"}}, None))
+    def test_face_enrollment_request_requires_admin_approval(
+        self,
+        _mock_train,
+        _mock_extract,
+    ):
+        csrf_token = self._csrf_token()
+        image_bytes = b"\xff\xd8\xffpending-face"
+        submitted = self.client.post(
+            "/api/face/enrollment-requests",
+            json={"image_base64": base64.b64encode(image_bytes).decode("ascii")},
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(submitted.status_code, 202)
+        request_id = submitted.get_json()["request_id"]
+
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM people").fetchone()[0],
+                0,
+            )
+
+        self.assertEqual(self._login().status_code, 302)
+        approved = self.client.post(
+            f"/api/face/enrollment-requests/{request_id}/approve",
+            json={"name": "王小明", "pin": "123456"},
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+        self.assertEqual(approved.status_code, 201)
+        self.assertEqual(approved.get_json()["status"], "approved")
+
     @patch.dict(
         os.environ,
         {
