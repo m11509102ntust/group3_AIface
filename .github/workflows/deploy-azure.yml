@@ -120,8 +120,6 @@ jobs:
             --settings `
               "FLASK_SECRET_KEY=$env:FLASK_SECRET_KEY" `
               "FACE_DETECT_API_KEY=$env:FACE_DETECT_API_KEY" `
-              "FACE_RECOGNITION_PROVIDER=local" `
-              "LOCAL_FACE_DISTANCE_THRESHOLD=75" `
             --output none
           if ($LASTEXITCODE -ne 0) { throw 'Application secret configuration failed' }
           if (-not [string]::IsNullOrWhiteSpace($env:AZURE_FACE_ENDPOINT) -and

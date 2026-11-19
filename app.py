@@ -1629,7 +1629,9 @@ def recognize_face():
         model_path = model_dir / "lbph-model.yml"
         labels_path = model_dir / "lbph-labels.json"
         if not model_path.exists() or not labels_path.exists():
-            return jsonify(error="尚未建立可用的人臉模型。"), 404
+            mapping, rebuild_error = _train_local_face_model()
+            if rebuild_error:
+                return jsonify(error=rebuild_error), 404
         try:
             threshold = float(os.getenv("LOCAL_FACE_DISTANCE_THRESHOLD", "75"))
         except ValueError:
@@ -1670,7 +1672,45 @@ def recognize_face():
             ), 201
         except (OSError, ValueError, json.JSONDecodeError):
             app.logger.exception("Could not use local LBPH face model")
-            return jsonify(error="本機人臉辨識模型無法讀取或執行。"), 500
+            mapping, rebuild_error = _train_local_face_model()
+            if rebuild_error:
+                return jsonify(error=rebuild_error), 500
+            try:
+                mapping = json.loads(labels_path.read_text(encoding="utf-8"))
+                recognizer = cv2.face.LBPHFaceRecognizer_create()
+                recognizer.read(str(model_path))
+                label, distance = recognizer.predict(face)
+                threshold = float(os.getenv("LOCAL_FACE_DISTANCE_THRESHOLD", "75"))
+                person_info = mapping.get(str(label))
+                if person_info is None or distance > threshold:
+                    return jsonify(error="找不到相符的人員。", distance=round(float(distance), 4)), 404
+                with closing(_connect_db()) as connection:
+                    person = connection.execute(
+                        "SELECT id, name FROM people WHERE id = ?",
+                        (person_info["id"],),
+                    ).fetchone()
+                    if person is None:
+                        return jsonify(error="辨識結果不在目前人員名冊中。"), 404
+                    checked_at = datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"
+                    ).replace("+00:00", "Z")
+                    connection.execute(
+                        'INSERT INTO mytable (person_id, "姓名", "打卡時間") '
+                        "VALUES (?, ?, ?)",
+                        (person["id"], person["name"], checked_at),
+                    )
+                    connection.commit()
+                return jsonify(
+                    person_id=person["id"],
+                    name=person["name"],
+                    distance=round(float(distance), 4),
+                    checkin_time=checked_at,
+                    provider="local-lbph",
+                    rebuilt=True,
+                ), 201
+            except (OSError, ValueError, json.JSONDecodeError, cv2.error):
+                app.logger.exception("Could not recover local LBPH face model")
+                return jsonify(error="本機人臉辨識模型無法讀取或執行。"), 500
 
     if _azure_face_configured():
         try:
