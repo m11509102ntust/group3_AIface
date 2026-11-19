@@ -31,9 +31,23 @@ function addCheckinRow(result) {
   const pendingFaceList = document.getElementById("pending-face-list");
   if (pendingFaceList) {
     pendingFaceList.addEventListener("click", async (event) => {
-      const button = event.target.closest(
-        ".approve-face-request, .reject-face-request",
-      );
+      const selectButton = event.target.closest("[data-select-pending-face]");
+      if (selectButton) {
+        const card = selectButton.closest("[data-request-id]");
+        const requestId = card.dataset.requestId;
+        document.getElementById("pending-face-request-id").value = requestId;
+        const preview = document.getElementById("selected-face-preview");
+        const image = document.getElementById("selected-face-image");
+        image.src = card.querySelector("img").src;
+        preview.hidden = false;
+        document.getElementById("selected-face-status").textContent =
+          "已同步待審照片；請填寫姓名與 PIN。";
+        personStatus.textContent = "待審照片已同步到新增人員表單。";
+        document.getElementById("person-name").focus();
+        return;
+      }
+
+      const button = event.target.closest(".reject-face-request");
       if (!button) {
         return;
       }
@@ -157,6 +171,37 @@ if (personForm) {
     personStatus.textContent = "正在儲存人員資料…";
 
     try {
+      const pendingRequestId = personForm.elements.namedItem(
+        "pending_face_request_id",
+      )?.value;
+      if (pendingRequestId) {
+        personStatus.textContent = "正在核准照片、裁切人臉並建立模型…";
+        const response = await fetch(
+          `/api/face/enrollment-requests/${encodeURIComponent(pendingRequestId)}/approve`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": personForm.dataset.csrfToken,
+            },
+            body: JSON.stringify({ name, pin }),
+          },
+        );
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || "待審人臉建檔失敗。");
+        }
+        personForm.reset();
+        document.getElementById("selected-face-preview").hidden = true;
+        document
+          .querySelector(`[data-request-id="${pendingRequestId}"]`)
+          ?.remove();
+        personStatus.textContent =
+          `${result.name} 已核准，照片已裁切並建立人臉模型。`;
+        window.location.reload();
+        return;
+      }
+
       const submitPerson = async (confirmNewPerson, confirmPinReset) =>
         fetch("/api/people", {
           method: "POST",

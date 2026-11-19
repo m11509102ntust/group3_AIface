@@ -75,30 +75,35 @@
                 <input id="person-name" name="name" type="text" maxlength="80" autocomplete="off" required>
                 <label for="person-pin">初始或新 PIN（6 至 12 位數字）</label>
                 <input id="person-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12" required>
+                <input id="pending-face-request-id" type="hidden" name="pending_face_request_id" value="">
+                <div class="pending-face-sync" id="pending-face-sync">
+                  <span class="section-label">PENDING FACE ENROLLMENT</span>
+                  <h3>待審人臉建檔</h3>
+                  {% if face_enrollment_requests %}
+                    <div class="pending-face-cards" id="pending-face-list" data-csrf-token="{{ csrf_token }}">
+                      {% for pending in face_enrollment_requests %}
+                        <article class="pending-face-card" data-request-id="{{ pending.id }}">
+                          <button class="pending-face-select" type="button" data-select-pending-face>
+                            <img src="{{ url_for('face_enrollment_request_photo', request_id=pending.id) }}" alt="待審人臉照片">
+                            <span>選取此照片並同步到人員表單</span>
+                          </button>
+                          <div class="camera-controls">
+                            <button class="camera-button reject-face-request" type="button">拒絕申請</button>
+                          </div>
+                        </article>
+                      {% endfor %}
+                    </div>
+                  {% else %}
+                    <p class="empty-state">目前沒有待審人臉照片。</p>
+                  {% endif %}
+                </div>
+                <div class="selected-face-preview" id="selected-face-preview" hidden>
+                  <img id="selected-face-image" alt="同步到人員表單的待審人臉照片">
+                  <small id="selected-face-status">已同步待審照片。</small>
+                </div>
                 <button class="camera-button primary-camera-button" type="submit">新增人員／重設 PIN</button>
               </form>
-              <p class="checkin-status" id="person-status" role="status" aria-live="polite">PIN 只會以雜湊形式儲存。</p>
-            </article>
-            <article class="panel" id="face-enrollment-requests">
-              <div class="panel-header"><div><span class="section-label">PENDING FACE ENROLLMENT</span><h2>待審人臉建檔</h2></div></div>
-              {% if face_enrollment_requests %}
-                <ul class="pending-face-list" id="pending-face-list" data-csrf-token="{{ csrf_token }}">
-                  {% for pending in face_enrollment_requests %}
-                    <li data-request-id="{{ pending.id }}">
-                      <img src="{{ url_for('face_enrollment_request_photo', request_id=pending.id) }}" alt="待審人臉照片">
-                      <label>人員姓名<input class="pending-face-name" type="text" maxlength="80" autocomplete="name"></label>
-                      <label>個人 PIN<input class="pending-face-pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12"></label>
-                      <div class="camera-controls">
-                        <button class="camera-button primary-camera-button approve-face-request" type="button">核准並建立模型</button>
-                        <button class="camera-button reject-face-request" type="button">拒絕申請</button>
-                      </div>
-                    </li>
-                  {% endfor %}
-                </ul>
-              {% else %}
-                <p class="empty-state">目前沒有待審人臉照片。</p>
-              {% endif %}
-              <p class="checkin-status" id="face-request-status" role="status" aria-live="polite"></p>
+              <p class="checkin-status" id="person-status" role="status" aria-live="polite">選取待審照片後填寫姓名與 PIN，再同步建立人員與裁切照片模型。</p>
             </article>
             <article class="panel recognition-panel">
               <div class="panel-header"><div><span class="section-label">LIVE FACE DETECTION</span><h2>人員／人臉建檔</h2></div><span class="live-pill"><i></i> CAMERA</span></div>

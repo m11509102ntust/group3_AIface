@@ -332,6 +332,22 @@ def _extract_local_face(image_bytes):
     return face, None
 
 
+def _encode_cropped_face(image_bytes):
+    if not _local_face_available():
+        return None, "本機人臉辨識元件尚未安裝。"
+    face, error = _extract_local_face(image_bytes)
+    if error:
+        return None, error
+    success, encoded = cv2.imencode(
+        ".jpg",
+        face,
+        [cv2.IMWRITE_JPEG_QUALITY, 92],
+    )
+    if not success:
+        return None, "裁切人臉照片失敗。"
+    return encoded.tobytes(), None
+
+
 def _train_local_face_model():
     if not _local_face_available():
         return None, "本機人臉辨識元件尚未安裝。"
@@ -1085,7 +1101,7 @@ def approve_face_enrollment_request(request_id):
                 "SELECT 1 FROM people WHERE name = ? COLLATE NOCASE", (name,)
             ).fetchone():
                 return jsonify(error="此姓名已登記，請使用既有人員。"), 409
-            face, face_error = _extract_local_face(pending["image"])
+            cropped_face, face_error = _encode_cropped_face(pending["image"])
             if face_error:
                 return jsonify(error=face_error), 422
             salt, pin_hash = _hash_pin(pin)
@@ -1096,7 +1112,7 @@ def approve_face_enrollment_request(request_id):
                 "INSERT INTO people "
                 "(name, pin_salt, pin_hash, face_image, face_enrolled_at, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (name, salt, pin_hash, pending["image"], created_at, created_at),
+                (name, salt, pin_hash, cropped_face, created_at, created_at),
             )
             connection.execute(
                 "DELETE FROM face_enrollment_requests WHERE id = ?", (request_id,)
