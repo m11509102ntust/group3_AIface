@@ -10,15 +10,26 @@ const detectionResult = document.getElementById("detection-result");
 let cameraStream = null;
 let fallbackEnrollmentImageBase64 = null;
 
+function setCameraCountdown(text, visible = true) {
+  const countdown = document.getElementById("camera-countdown");
+  if (!countdown) {
+    return;
+  }
+  countdown.textContent = text;
+  countdown.hidden = !visible;
+}
+
 async function countdownCapture(seconds = 5) {
   if (!cameraStream || !video.videoWidth || !video.videoHeight) {
     cameraStatus.textContent = "攝影機畫面尚未就緒，無法拍照建模。";
+    setCameraCountdown("", false);
     return;
   }
 
   const maxDimension = 1024;
   for (let remaining = seconds; remaining > 0; remaining -= 1) {
-    cameraStatus.textContent = `辨識失敗，倒數拍照建模：${remaining} 秒`;
+    cameraStatus.textContent = `辨識失敗，倒數拍照建模：剩餘 ${remaining} 秒`;
+    setCameraCountdown(`${remaining}`);
     await new Promise((resolve) => window.setTimeout(resolve, 1000));
   }
 
@@ -26,8 +37,10 @@ async function countdownCapture(seconds = 5) {
   canvas.width = Math.round(video.videoWidth * scale);
   canvas.height = Math.round(video.videoHeight * scale);
   canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  setCameraCountdown("拍照完成", true);
   fallbackEnrollmentImageBase64 =
     canvas.toDataURL("image/jpeg", 0.85).split(",", 2)[1];
+  cameraStatus.textContent = "拍照完成，正在提交管理員審核…";
   try {
     const response = await fetch("/api/face/enrollment-requests", {
       method: "POST",
@@ -42,9 +55,11 @@ async function countdownCapture(seconds = 5) {
       throw new Error(result.error || "待審照片提交失敗。");
     }
     fallbackEnrollmentImageBase64 = null;
+    setTimeout(() => setCameraCountdown("", false), 1800);
     cameraStatus.textContent =
-      "照片已提交管理員審核；核准並建立人員後才會啟用下次辨識。";
+      "拍照完成：照片已提交管理員審核；核准並建立人員後才會啟用下次辨識。";
   } catch (error) {
+    setTimeout(() => setCameraCountdown("", false), 1800);
     cameraStatus.textContent =
       error instanceof TypeError
         ? "無法連線至網站，請檢查網路後重試。"
@@ -65,6 +80,7 @@ function stopCamera() {
   startButton.disabled = false;
   detectButton.disabled = true;
   stopButton.disabled = true;
+  setCameraCountdown("", false);
 }
 
 startButton.addEventListener("click", async () => {

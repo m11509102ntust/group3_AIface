@@ -37,6 +37,23 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 .primary-camera-button { border-color: #1f8f82; background: #1f8f82; color: #fff; }
 .primary-camera-button:hover:not(:disabled) { background: #187a70; color: #fff; }
 .camera-status { min-height: 20px; margin: 12px 0; color: #66858a; font-size: 12px; }
+.camera-countdown {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  transform: translate(-50%, -50%);
+  min-width: 150px;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 18px;
+  padding: 18px 24px;
+  background: rgba(16, 31, 42, 0.82);
+  color: #fff;
+  font-size: 32px;
+  font-weight: 800;
+  text-align: center;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+}
 .detection-result { max-height: 190px; margin: 0; padding: 12px; overflow: auto; border-radius: 6px; background: #f3f7f7; color: #31535a; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .checkin-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .8fr); gap: 17px; margin-top: 24px; }
 .single-checkin-grid { grid-template-columns: minmax(0, 1fr); }

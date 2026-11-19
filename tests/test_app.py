@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import requests
@@ -104,6 +105,14 @@ class FaceSenseAppTests(unittest.TestCase):
         self.assertNotIn("1,284", page)
         self.assertNotIn("待確認事件", page)
         self.assertNotIn('aria-label="通知"', page)
+
+    def test_checkin_page_shows_countdown_and_capture_complete_ui(self):
+        page = self.client.get("/checkin").get_data(as_text=True)
+        self.assertIn("倒數 5 秒拍照", page)
+        self.assertIn('id="camera-countdown"', page)
+        self.assertIn("辨識失敗時倒數 5 秒拍照", page)
+        js = Path("static/face-detect.js").read_text(encoding="utf-8")
+        self.assertIn("拍照完成", js)
 
     def test_dashboard_metrics_use_real_attendance_and_are_private(self):
         self.assertEqual(self._login().status_code, 302)
