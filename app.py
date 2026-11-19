@@ -423,7 +423,8 @@ def index():
                     dict(row)
                     for row in connection.execute(
                         "SELECT id, name, pin_hash IS NOT NULL AS has_pin, "
-                        "face_embedding IS NOT NULL AS has_face_model "
+                        "face_embedding IS NOT NULL AS has_face_model, "
+                        "face_image IS NOT NULL AS has_face_photo "
                         "FROM people ORDER BY name COLLATE NOCASE"
                     )
                 ]
@@ -432,6 +433,15 @@ def index():
                     for row in connection.execute(
                         "SELECT id, created_at FROM face_enrollment_requests "
                         "ORDER BY id"
+                    )
+                ]
+            else:
+                people = [
+                    dict(row)
+                    for row in connection.execute(
+                        "SELECT id, name, pin_hash IS NOT NULL AS has_pin, "
+                        "face_image IS NOT NULL AS has_face_photo "
+                        "FROM people ORDER BY name COLLATE NOCASE"
                     )
                 ]
             if employee_authenticated:
@@ -452,7 +462,7 @@ def index():
                 else:
                     employee_name = person["name"]
 
-            if admin_authenticated or employee_authenticated:
+            if admin_authenticated or employee_authenticated or page == "records":
                 today = datetime.now(timezone.utc).date().isoformat() + "%"
                 record_filter = ""
                 query_params = [today]
@@ -495,7 +505,7 @@ def index():
         database_error = "無法讀取打卡資料庫，請稍後再試。"
 
     page = request.path.strip("/") or "overview"
-    if page in {"people", "registered", "settings"} and not admin_authenticated:
+    if page in {"people", "settings"} and not admin_authenticated:
         return redirect("/")
 
     return render_template(
@@ -1076,6 +1086,26 @@ def face_enrollment_request_photo(request_id):
     )
 
 
+@app.get("/api/people/<int:person_id>/face-photo")
+def registered_person_photo(person_id):
+    try:
+        with closing(_connect_db()) as connection:
+            photo = connection.execute(
+                "SELECT face_image FROM people WHERE id = ?",
+                (person_id,),
+            ).fetchone()
+    except sqlite3.Error:
+        app.logger.exception("Could not read registered person face photo")
+        return jsonify(error="無法讀取人員照片。"), 500
+    if photo is None or not photo["face_image"]:
+        return jsonify(error="此人員尚未建立照片。"), 404
+    return Response(
+        photo["face_image"],
+        mimetype="image/jpeg",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
 @app.post("/api/face/enrollment-requests/<int:request_id>/approve")
 @_admin_required
 def approve_face_enrollment_request(request_id):
@@ -1149,6 +1179,77 @@ def reject_face_enrollment_request(request_id):
     if cursor.rowcount == 0:
         return jsonify(error="找不到此建檔申請。"), 404
     return jsonify(deleted=True)
+
+
+@app.post("/api/face/enrollment-requests/batch-approve")
+@_admin_required
+def batch_approve_face_enrollment_requests():
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    entries = payload.get("entries")
+    if not isinstance(entries, list) or not entries:
+        return jsonify(error="請提供至少一筆待審照片與人員資料。"), 400
+
+    approved = []
+    failed = []
+    try:
+        with closing(_connect_db()) as connection:
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    failed.append({"error": "資料格式錯誤"})
+                    continue
+                request_id = entry.get("request_id")
+                name = _normalize_name(entry.get("name", "")) if isinstance(entry.get("name"), str) else ""
+                pin = entry.get("pin")
+                if not isinstance(request_id, int) or not name or len(name) > 80:
+                    failed.append({"request_id": request_id, "error": "請輸入有效申請編號與姓名"})
+                    continue
+                if not isinstance(pin, str) or not PIN_PATTERN.fullmatch(pin):
+                    failed.append({"request_id": request_id, "error": "PIN 必須為 6 至 12 位數字"})
+                    continue
+                pending = connection.execute(
+                    "SELECT * FROM face_enrollment_requests WHERE id = ?", (request_id,)
+                ).fetchone()
+                if pending is None:
+                    failed.append({"request_id": request_id, "error": "找不到待審申請"})
+                    continue
+                if connection.execute(
+                    "SELECT 1 FROM people WHERE name = ? COLLATE NOCASE", (name,)
+                ).fetchone():
+                    failed.append({"request_id": request_id, "error": "此姓名已登記"})
+                    continue
+                cropped_face, face_error = _encode_cropped_face(pending["image"])
+                if face_error:
+                    failed.append({"request_id": request_id, "error": face_error})
+                    continue
+                salt, pin_hash = _hash_pin(pin)
+                created_at = datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                ).replace("+00:00", "Z")
+                cursor = connection.execute(
+                    "INSERT INTO people "
+                    "(name, pin_salt, pin_hash, face_image, face_enrolled_at, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (name, salt, pin_hash, cropped_face, created_at, created_at),
+                )
+                connection.execute(
+                    "DELETE FROM face_enrollment_requests WHERE id = ?", (request_id,)
+                )
+                approved.append({"request_id": request_id, "person_id": cursor.lastrowid, "name": name})
+            connection.commit()
+    except sqlite3.Error:
+        app.logger.exception("Could not batch approve face enrollment requests")
+        return jsonify(error="批次核准失敗，請稍後再試。"), 500
+
+    train_error = None
+    if approved:
+        try:
+            _mapping, train_error = _train_local_face_model()
+        except (RuntimeError, ValueError) as exc:
+            train_error = str(exc)
+    return jsonify(approved=approved, failed=failed, trained=(train_error is None)), 200
 
 
 @app.post("/api/face/enroll")

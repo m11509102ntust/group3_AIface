@@ -141,6 +141,10 @@ class FaceSenseAppTests(unittest.TestCase):
         anonymous_page = anonymous_client.get("/").get_data(as_text=True)
         self.assertNotIn(">2</strong>", anonymous_page)
         self.assertNotIn("王小明", anonymous_page)
+        public_records = anonymous_client.get("/records").get_data(as_text=True)
+        self.assertIn("王小明", public_records)
+        self.assertIn("打卡紀錄（公開）", public_records)
+        self.assertEqual(anonymous_client.get("/registered").status_code, 200)
 
     @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
     def test_admin_can_disable_face_detection_and_detection_is_blocked(self):

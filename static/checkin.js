@@ -98,6 +98,69 @@ function addCheckinRow(result) {
   }
 }
 
+const batchApproveButton = document.getElementById("batch-approve-face");
+if (batchApproveButton && pendingFaceList) {
+  batchApproveButton.addEventListener("click", async () => {
+    const entries = Array.from(
+      pendingFaceList.querySelectorAll(
+        'input[name="batch_face_request"]:checked',
+      ),
+    ).map((checkbox) => {
+      const card = checkbox.closest("[data-request-id]");
+      return {
+        request_id: Number(card.dataset.requestId),
+        name: card.querySelector(".batch-face-name").value.trim(),
+        pin: card.querySelector(".batch-face-pin").value,
+      };
+    });
+    if (!entries.length) {
+      personStatus.textContent = "請先勾選要批次核准的人臉照片。";
+      return;
+    }
+
+    batchApproveButton.disabled = true;
+    personStatus.textContent = "正在批次核准並建立人臉模型…";
+    try {
+      const response = await fetch(
+        "/api/face/enrollment-requests/batch-approve",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": pendingFaceList.dataset.csrfToken,
+          },
+          body: JSON.stringify({ entries }),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || "批次核准失敗。");
+      }
+      for (const approved of result.approved) {
+        pendingFaceList
+          .querySelector(`[data-request-id="${approved.request_id}"]`)
+          ?.remove();
+      }
+      const failedText =
+        result.failed.length
+          ? `；失敗 ${result.failed.length} 筆：${result.failed.map((item) => item.error).join("、")}`
+          : "";
+      personStatus.textContent =
+        `批次核准完成：成功 ${result.approved.length} 筆，待審照片已移除${failedText}`;
+      if (!pendingFaceList.children.length) {
+        document.getElementById("pending-face-sync").hidden = true;
+      }
+    } catch (error) {
+      personStatus.textContent =
+        error instanceof TypeError
+          ? "無法連線至網站，請檢查網路後重試。"
+          : error.message;
+    } finally {
+      batchApproveButton.disabled = false;
+    }
+  });
+}
+
 async function createCheckin(csrfToken) {
   return fetch("/api/checkins", {
     method: "POST",

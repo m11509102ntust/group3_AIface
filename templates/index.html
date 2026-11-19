@@ -65,7 +65,7 @@
         {% elif page == "checkin" %}
           <section class="checkin-grid single-checkin-grid"><article class="panel"><div class="panel-header"><div><span class="section-label">ATTENDANCE CHECK-IN</span><h2>我要打卡</h2></div></div>{% if employee_authenticated %}<p class="form-description">目前登入人員：<strong>{{ employee_name }}</strong></p><form class="checkin-form" id="checkin-form" data-csrf-token="{{ csrf_token }}"><button class="camera-button primary-camera-button" type="submit">記錄我的打卡</button></form><p class="checkin-status" id="checkin-status" role="status" aria-live="polite">可使用 PIN 登入後直接打卡。</p>{% elif checkin_configured %}<p class="form-description">請使用攝影機辨識已建檔人員。辨識失敗時會倒數 5 秒拍照，並提交管理員審核；核准後才建立下次辨識模型。</p><div class="camera-frame" id="camera-frame" data-face-mode="recognize" data-csrf-token="{{ csrf_token }}"><div class="camera-grid"></div><div class="camera-placeholder" id="camera-placeholder">啟動攝影機後，按「辨識並打卡」</div><video id="camera-video" autoplay muted playsinline aria-label="攝影機即時畫面"></video><canvas id="detection-canvas" hidden aria-hidden="true"></canvas><span class="camera-countdown" id="camera-countdown" aria-live="assertive" hidden></span><span class="camera-meta">辨識失敗時倒數 5 秒拍照，照片不會直接建立模型</span></div><div class="camera-controls"><button class="camera-button primary-camera-button" id="start-camera" type="button">啟動攝影機</button><button class="camera-button" id="detect-face" type="button" disabled>辨識並打卡</button><button class="camera-button" id="stop-camera" type="button" disabled>停止攝影機</button></div><p class="camera-status" id="camera-status" role="status" aria-live="polite">攝影機尚未啟動。</p><pre class="detection-result" id="detection-result" aria-live="polite">辨識結果會顯示在這裡。</pre>{% else %}<p class="notice error-notice">打卡登入尚未完成伺服器設定。</p>{% endif %}</article></section>
         {% elif page == "records" %}
-          <section class="content-grid records-page"><article class="panel activity-panel"><div class="panel-header"><div><span class="section-label">RECENT CHECK-INS</span><h2>打卡紀錄</h2></div></div>{% if not (admin_authenticated or employee_authenticated) %}<p class="empty-state">登入後即可查看已儲存的打卡紀錄。</p>{% elif checkins %}<div class="table-scroll"><table class="checkin-table"><thead><tr><th>姓名</th><th>打卡時間（本地時區）</th></tr></thead><tbody id="checkin-records">{% for checkin in checkins %}<tr><td>{{ checkin.name }}</td><td><time data-utc-time="{{ checkin.checkin_time }}">{{ checkin.checkin_time }}</time></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="empty-state">目前沒有打卡紀錄。</p>{% endif %}</article></section>
+          <section class="content-grid records-page"><article class="panel activity-panel"><div class="panel-header"><div><span class="section-label">RECENT CHECK-INS</span><h2>打卡紀錄（公開）</h2></div></div>{% if checkins %}<div class="table-scroll"><table class="checkin-table"><thead><tr><th>姓名</th><th>打卡時間（本地時區）</th></tr></thead><tbody id="checkin-records">{% for checkin in checkins %}<tr><td>{{ checkin.name }}</td><td><time data-utc-time="{{ checkin.checkin_time }}">{{ checkin.checkin_time }}</time></td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="empty-state">目前沒有打卡紀錄。</p>{% endif %}</article></section>
         {% elif page == "people" %}
           <section class="content-grid people-builder-page">
             <article class="panel">
@@ -83,15 +83,21 @@
                     <div class="pending-face-cards" id="pending-face-list" data-csrf-token="{{ csrf_token }}">
                       {% for pending in face_enrollment_requests %}
                         <article class="pending-face-card" data-request-id="{{ pending.id }}">
+                          <label class="batch-face-check"><input type="checkbox" name="batch_face_request" value="{{ pending.id }}">批次核准此照片</label>
                           <button class="pending-face-select" type="button" data-select-pending-face>
                             <img src="{{ url_for('face_enrollment_request_photo', request_id=pending.id) }}" alt="待審人臉照片">
                             <span>選取此照片並同步到人員表單</span>
                           </button>
+                          <label>批次人員姓名<input class="batch-face-name" type="text" maxlength="80" autocomplete="name"></label>
+                          <label>批次 PIN<input class="batch-face-pin" type="password" inputmode="numeric" pattern="[0-9]{6,12}" minlength="6" maxlength="12"></label>
                           <div class="camera-controls">
                             <button class="camera-button reject-face-request" type="button">拒絕申請</button>
                           </div>
                         </article>
                       {% endfor %}
+                    </div>
+                    <div class="camera-controls">
+                      <button class="camera-button primary-camera-button" id="batch-approve-face" type="button">批次核准選取照片</button>
                     </div>
                   {% else %}
                     <p class="empty-state">目前沒有待審人臉照片。</p>
@@ -114,7 +120,7 @@
             </article>
           </section>
         {% elif page == "registered" %}
-          <section class="content-grid records-page"><article class="panel" id="registered-people"><div class="panel-header"><div><span class="section-label">REGISTERED PEOPLE</span><h2>已登記人員</h2></div><span class="member-count">{{ people|length }} 人</span></div>{% if people %}<ul class="member-list" id="member-list">{% for person in people %}<li data-name="{{ person.name }}">{{ person.name }}{% if not person.has_pin %}（需重設 PIN）{% endif %}</li>{% endfor %}</ul>{% else %}<p class="empty-state" id="member-empty">尚無人員資料。</p><ul class="member-list" id="member-list" hidden></ul>{% endif %}</article></section>
+          <section class="content-grid records-page"><article class="panel" id="registered-people"><div class="panel-header"><div><span class="section-label">REGISTERED PEOPLE</span><h2>已登記人員</h2></div><span class="member-count">{{ people|length }} 人</span></div>          {% if people %}<ul class="registered-people-grid" id="member-list">{% for person in people %}<li data-name="{{ person.name }}">{% if person.has_face_photo %}<img src="{{ url_for('registered_person_photo', person_id=person.id) }}" alt="{{ person.name }} 的人臉照片">{% else %}<span class="registered-person-placeholder" aria-label="{{ person.name }} 尚無照片">{{ person.name[0] }}</span>{% endif %}<strong>{{ person.name }}</strong>{% if not person.has_pin %}<small>需重設 PIN</small>{% endif %}</li>{% endfor %}</ul>{% else %}<p class="empty-state" id="member-empty">尚無人員資料。</p><ul class="registered-people-grid" id="member-list" hidden></ul>{% endif %}</article></section>
         {% elif page == "settings" %}
           <section class="settings-section"><article class="panel"><div class="panel-header"><div><span class="section-label">SYSTEM SETTINGS</span><h2>系統設定與服務狀態</h2></div></div><dl class="settings-list"><div><dt>打卡資料庫</dt><dd>{{ "可讀取" if database_ready else "無法讀取" }}</dd></div><div><dt>個人 PIN 打卡</dt><dd>{{ "已設定" if checkin_configured else "尚未設定伺服器密碼與 Flask 金鑰" }}</dd></div><div><dt>人臉模型服務</dt><dd>{{ "已設定（不顯示金鑰）" if face_detection_configured else "尚未設定" }}</dd></div><div><dt>身份辨識</dt><dd>使用 SQLite people.face_embedding 比對；管理員可在「人員／人臉建檔」建立模型</dd></div></dl><div class="settings-control"><div><strong>允許使用人臉辨識</strong><p class="form-description">停用後，建檔與攝影機辨識請求會被拒絕。</p></div><label class="settings-switch" for="face-detection-enabled"><input id="face-detection-enabled" type="checkbox" data-csrf-token="{{ csrf_token }}" {% if face_detection_enabled %}checked{% endif %} {% if not face_detection_configured %}disabled{% endif %}><span>{{ "未設定 API 金鑰" if not face_detection_configured else ("啟用中" if face_detection_enabled else "已停用") }}</span></label></div><p class="checkin-status" id="settings-status" role="status" aria-live="polite"></p></article></section>
         {% endif %}
