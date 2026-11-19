@@ -448,6 +448,40 @@ class FaceSenseAppTests(unittest.TestCase):
         )
         self.assertNotIn("server-only-test-key", response.get_data(as_text=True))
 
+    @patch.dict(
+        os.environ,
+        {
+            "AZURE_FACE_ENDPOINT": "https://facesense.cognitiveservices.azure.com",
+            "AZURE_FACE_KEY": "azure-test-key",
+        },
+    )
+    @patch("app.requests.request")
+    def test_azure_face_enrollment_stores_azure_person_id(self, mock_request):
+        self.assertEqual(self._login().status_code, 302)
+        self.assertEqual(self._register_person("王小明", "123456").status_code, 201)
+        group = Mock(status_code=200)
+        person = Mock(status_code=200)
+        person.json.return_value = {"personId": "azure-person-1"}
+        persisted = Mock(status_code=200)
+        train = Mock(status_code=202)
+        mock_request.side_effect = [group, person, persisted, train]
+        csrf_token = self._csrf_token()
+        image_base64 = base64.b64encode(b"\xff\xd8\xffsample-jpeg").decode("ascii")
+
+        response = self.client.post(
+            "/api/face/enroll",
+            json={"person_id": 1, "image_base64": image_base64},
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["provider"], "azure-face")
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            stored = connection.execute(
+                "SELECT azure_person_id FROM people WHERE id = 1"
+            ).fetchone()
+        self.assertEqual(stored[0], "azure-person-1")
+
     @patch.dict(os.environ, {"FACE_DETECT_API_KEY": "server-only-test-key"})
     @patch("app.requests.post")
     def test_face_embedding_enrollment_recognizes_and_records_checkin(self, mock_post):

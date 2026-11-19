@@ -27,6 +27,8 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("WEBSITE_SITE_NAME"))
 
 FACE_DETECT_URL = "https://api-face-detect.knowlez.com/v1/face/detect"
+AZURE_FACE_API_VERSION = "v1.0"
+AZURE_FACE_PERSON_GROUP_ID = "facesense-production"
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 FACE_DETECT_RATE_LIMIT = 10
 FACE_DETECT_RATE_WINDOW = 60
@@ -93,6 +95,8 @@ def _connect_db():
         connection.execute("ALTER TABLE people ADD COLUMN face_embedding TEXT")
     if "face_enrolled_at" not in people_columns:
         connection.execute("ALTER TABLE people ADD COLUMN face_enrolled_at TEXT")
+    if "azure_person_id" not in people_columns:
+        connection.execute("ALTER TABLE people ADD COLUMN azure_person_id TEXT")
     for legacy_column in ("embedding", "face_encoding", "face_descriptor", "face_vector"):
         if legacy_column in people_columns:
             connection.execute(
@@ -725,6 +729,165 @@ def _request_face_embedding(image_base64):
     return embedding, None, None
 
 
+def _azure_face_configured():
+    return bool(
+        os.getenv("AZURE_FACE_ENDPOINT", "").strip()
+        and os.getenv("AZURE_FACE_KEY", "").strip()
+    )
+
+
+def _azure_face_url(path):
+    endpoint = os.getenv("AZURE_FACE_ENDPOINT", "").strip().rstrip("/")
+    return f"{endpoint}/face/{AZURE_FACE_API_VERSION}/{path.lstrip('/')}"
+
+
+def _azure_request(method, path, *, data=None, json=None):
+    headers = {
+        "Ocp-Apim-Subscription-Key": os.getenv("AZURE_FACE_KEY", "").strip()
+    }
+    if data is not None:
+        headers["Content-Type"] = "application/octet-stream"
+    elif json is not None:
+        headers["Content-Type"] = "application/json"
+    return requests.request(
+        method,
+        _azure_face_url(path),
+        headers=headers,
+        data=data,
+        json=json,
+        timeout=(5, 30),
+        allow_redirects=False,
+    )
+
+
+def _azure_ensure_person_group():
+    response = _azure_request(
+        "GET", f"persongroups/{AZURE_FACE_PERSON_GROUP_ID}"
+    )
+    if response.status_code == 404:
+        response = _azure_request(
+            "PUT",
+            f"persongroups/{AZURE_FACE_PERSON_GROUP_ID}",
+            json={
+                "name": "FaceSense",
+                "userData": "FaceSense Azure Face identity group",
+                "recognitionModel": "recognition_04",
+            },
+        )
+    if response.status_code not in (200, 201):
+        app.logger.warning(
+            "Azure Face person group returned HTTP %s", response.status_code
+        )
+        raise RuntimeError("Azure Face Person Group 建立或讀取失敗。")
+
+
+def _azure_create_person(name):
+    response = _azure_request(
+        "POST",
+        f"persongroups/{AZURE_FACE_PERSON_GROUP_ID}/persons",
+        json={"name": name},
+    )
+    if response.status_code not in (200, 201):
+        app.logger.warning(
+            "Azure Face person creation returned HTTP %s", response.status_code
+        )
+        raise RuntimeError("Azure Face Person 建立失敗。")
+    try:
+        return response.json()["personId"]
+    except (ValueError, KeyError) as exc:
+        raise RuntimeError("Azure Face Person 回傳格式不正確。") from exc
+
+
+def _azure_add_person_face(person_id, image_bytes):
+    response = _azure_request(
+        "POST",
+        f"persongroups/{AZURE_FACE_PERSON_GROUP_ID}/persons/{person_id}/persistedFaces",
+        data=image_bytes,
+    )
+    if response.status_code not in (200, 201):
+        app.logger.warning(
+            "Azure Face persisted face returned HTTP %s", response.status_code
+        )
+        raise RuntimeError("Azure Face 人臉照片新增失敗。")
+
+
+def _azure_train_person_group():
+    response = _azure_request(
+        "POST", f"persongroups/{AZURE_FACE_PERSON_GROUP_ID}/train"
+    )
+    if response.status_code not in (200, 202):
+        app.logger.warning(
+            "Azure Face training returned HTTP %s", response.status_code
+        )
+        raise RuntimeError("Azure Face Person Group 訓練啟動失敗。")
+
+
+def _azure_training_status():
+    response = _azure_request(
+        "GET", f"persongroups/{AZURE_FACE_PERSON_GROUP_ID}/training"
+    )
+    if response.status_code != 200:
+        raise RuntimeError("Azure Face 訓練狀態讀取失敗。")
+    try:
+        return response.json().get("status")
+    except (ValueError, AttributeError) as exc:
+        raise RuntimeError("Azure Face 訓練狀態格式不正確。") from exc
+
+
+def _azure_detect_face(image_bytes):
+    response = requests.post(
+        _azure_face_url(
+            "detect?returnFaceId=true&returnFaceLandmarks=false"
+            "&detectionModel=detection_03&recognitionModel=recognition_04"
+        ),
+        headers={
+            "Ocp-Apim-Subscription-Key": os.getenv("AZURE_FACE_KEY", "").strip(),
+            "Content-Type": "application/octet-stream",
+        },
+        data=image_bytes,
+        timeout=(5, 30),
+        allow_redirects=False,
+    )
+    if response.status_code not in (200, 201):
+        app.logger.warning("Azure Face detect returned HTTP %s", response.status_code)
+        raise RuntimeError("Azure Face 偵測失敗。")
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Azure Face 回傳了無效資料。") from exc
+    if not isinstance(result, list):
+        raise RuntimeError("Azure Face 回傳格式不正確。")
+    return result
+
+
+def _azure_identify(image_bytes):
+    faces = _azure_detect_face(image_bytes)
+    if len(faces) != 1 or not faces[0].get("faceId"):
+        raise ValueError("畫面必須且只能包含一張清楚的人臉。")
+    if _azure_training_status() != "succeeded":
+        raise RuntimeError("Azure Face 人臉資料尚未訓練完成，請稍後再試。")
+    response = _azure_request(
+        "POST",
+        "identify",
+        json={
+            "faceIds": [faces[0]["faceId"]],
+            "personGroupId": AZURE_FACE_PERSON_GROUP_ID,
+            "maxNumOfCandidatesReturned": 1,
+            "confidenceThreshold": 0.6,
+        },
+    )
+    if response.status_code not in (200, 201):
+        app.logger.warning("Azure Face identify returned HTTP %s", response.status_code)
+        raise RuntimeError("Azure Face 身分辨識失敗。")
+    try:
+        results = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Azure Face 身分辨識回傳格式不正確。") from exc
+    if not results or not results[0].get("candidates"):
+        return None
+    return results[0]["candidates"][0]
+
+
 def _find_photo_blob_column(connection):
     photo_columns = {
         "photo",
@@ -769,6 +932,46 @@ def enroll_face():
     ):
         return jsonify(error="圖片格式只支援 JPEG 或 PNG。"), 400
 
+    if _azure_face_configured():
+        try:
+            with closing(_connect_db()) as connection:
+                person = connection.execute(
+                    "SELECT id, name, azure_person_id FROM people WHERE id = ?",
+                    (person_id,),
+                ).fetchone()
+            if person is None:
+                return jsonify(error="找不到指定的人員。"), 404
+            _azure_ensure_person_group()
+            azure_person_id = person["azure_person_id"] or _azure_create_person(
+                person["name"]
+            )
+            _azure_add_person_face(azure_person_id, image_bytes)
+            _azure_train_person_group()
+            enrolled_at = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ).replace("+00:00", "Z")
+            with closing(_connect_db()) as connection:
+                connection.execute(
+                    "UPDATE people SET azure_person_id = ?, face_enrolled_at = ? "
+                    "WHERE id = ?",
+                    (azure_person_id, enrolled_at, person_id),
+                )
+                connection.commit()
+            return jsonify(
+                person_id=person_id,
+                name=person["name"],
+                enrolled_at=enrolled_at,
+                provider="azure-face",
+            )
+        except requests.RequestException:
+            app.logger.exception("Azure Face enrollment request failed")
+            return jsonify(error="無法連線到 Azure Face，請稍後再試。"), 502
+        except (RuntimeError, ValueError) as exc:
+            return jsonify(error=str(exc)), 502
+        except sqlite3.Error:
+            app.logger.exception("Could not save Azure Face enrollment")
+            return jsonify(error="人臉模型儲存失敗，請稍後再試。"), 500
+
     embedding, error, status = _request_face_embedding(image_base64)
     if error:
         return jsonify(error=error), status
@@ -799,6 +1002,58 @@ def enroll_face():
 def auto_enroll_faces():
     if not _csrf_is_valid():
         return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+    if _azure_face_configured():
+        try:
+            with closing(_connect_db()) as connection:
+                photo_column = _find_photo_blob_column(connection)
+                if photo_column is None:
+                    return jsonify(
+                        error="people 表找不到可用的照片 BLOB 欄位。",
+                        enrolled=0,
+                        skipped=0,
+                    ), 409
+                people = connection.execute(
+                    f'SELECT id, name, "{photo_column}" AS photo '
+                    "FROM people WHERE azure_person_id IS NULL "
+                    f'AND "{photo_column}" IS NOT NULL'
+                ).fetchall()
+                if not people:
+                    return jsonify(enrolled=0, skipped=0, errors=[]), 200
+                _azure_ensure_person_group()
+                enrolled = 0
+                errors = []
+                for person in people:
+                    try:
+                        image_bytes = person["photo"]
+                        if not isinstance(image_bytes, bytes) or not (
+                            image_bytes.startswith(b"\xff\xd8\xff")
+                            or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+                        ):
+                            errors.append(f"{person['name']}: 照片格式錯誤")
+                            continue
+                        azure_person_id = _azure_create_person(person["name"])
+                        _azure_add_person_face(azure_person_id, image_bytes)
+                        enrolled_at = datetime.now(timezone.utc).isoformat(
+                            timespec="seconds"
+                        ).replace("+00:00", "Z")
+                        connection.execute(
+                            "UPDATE people SET azure_person_id = ?, "
+                            "face_enrolled_at = ? WHERE id = ?",
+                            (azure_person_id, enrolled_at, person["id"]),
+                        )
+                        enrolled += 1
+                    except (RuntimeError, ValueError, requests.RequestException) as exc:
+                        errors.append(f"{person['name']}: {exc}")
+                if enrolled:
+                    _azure_train_person_group()
+                connection.commit()
+            return jsonify(enrolled=enrolled, skipped=0, errors=errors)
+        except requests.RequestException:
+            app.logger.exception("Azure Face auto-enrollment request failed")
+            return jsonify(error="無法連線到 Azure Face，請稍後再試。"), 502
+        except (RuntimeError, sqlite3.Error) as exc:
+            app.logger.exception("Could not auto-enroll Azure Face models")
+            return jsonify(error=str(exc)), 500
     try:
         with closing(_connect_db()) as connection:
             photo_column = _find_photo_blob_column(connection)
@@ -888,6 +1143,46 @@ def recognize_face():
         or image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
     ):
         return jsonify(error="圖片格式錯誤或大小不可超過 5 MB。"), 400
+
+    if _azure_face_configured():
+        try:
+            candidate = _azure_identify(image_bytes)
+            if candidate is None:
+                return jsonify(error="找不到相符的人員。"), 404
+            person_id = candidate.get("personId")
+            confidence = candidate.get("confidence")
+            checked_at = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ).replace("+00:00", "Z")
+            with closing(_connect_db()) as connection:
+                person = connection.execute(
+                    "SELECT id, name FROM people WHERE azure_person_id = ?",
+                    (person_id,),
+                ).fetchone()
+                if person is None:
+                    return jsonify(error="辨識結果不在目前人員名冊中。"), 404
+                connection.execute(
+                    'INSERT INTO mytable (person_id, "姓名", "打卡時間") '
+                    "VALUES (?, ?, ?)",
+                    (person["id"], person["name"], checked_at),
+                )
+                connection.commit()
+            return jsonify(
+                person_id=person["id"],
+                name=person["name"],
+                similarity=round(confidence, 4) if isinstance(confidence, (int, float)) else None,
+                checkin_time=checked_at,
+                provider="azure-face",
+            ), 201
+        except requests.RequestException:
+            app.logger.exception("Azure Face recognition request failed")
+            return jsonify(error="無法連線到 Azure Face，請稍後再試。"), 502
+        except (RuntimeError, ValueError) as exc:
+            status = 400 if isinstance(exc, ValueError) else 502
+            return jsonify(error=str(exc)), status
+        except sqlite3.Error:
+            app.logger.exception("Could not recognize with Azure Face or save check-in")
+            return jsonify(error="人臉辨識或打卡資料儲存失敗，請稍後再試。"), 500
 
     embedding, error, status = _request_face_embedding(image_base64)
     if error:

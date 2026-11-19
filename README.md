@@ -61,6 +61,15 @@ Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHEC
 
 設定伺服器環境變數 `FACE_DETECT_API_KEY`，Flask 後端會以 `x-api-key` 標頭呼叫 `https://api-face-detect.knowlez.com/v1/face/detect`。金鑰不會送到瀏覽器或存入儲存庫。
 
+正式辨識可另外設定 Azure Face：
+
+```powershell
+$env:AZURE_FACE_ENDPOINT = "https://<resource-name>.cognitiveservices.azure.com"
+$env:AZURE_FACE_KEY = "<Azure Face resource key>"
+```
+
+設定後，`/api/face/enroll`會在 Azure Face 建立或取得 Person、加入照片並啟動訓練；`/api/face/recognize`會使用 Azure Face 的 Detect 與 Identify 取得人員，再記錄 SQLite 打卡。`azure_person_id`、`face_enrolled_at`與 SQLite 人員名冊會綁定。未設定 Azure Face 時可保留既有 embedding 服務相容模式。部署時需在 GitHub Actions 設定 `AZURE_FACE_ENDPOINT`與`AZURE_FACE_KEY` secrets，部署流程會寫入 Azure App Service。
+
 本機測試可在目前 PowerShell 工作階段設定：
 
 ```powershell
