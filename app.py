@@ -1443,5 +1443,10 @@ def request_too_large(_):
     return jsonify(error="請求大小超過限制。"), 413
 
 
+@app.get("/healthz")
+def healthz():
+    return jsonify(status="ok"), 200
+
+
 if __name__ == "__main__":
     app.run(debug=True)
