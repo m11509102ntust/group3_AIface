@@ -15,6 +15,7 @@ from app import (
     PIN_LOGIN_MAX_ATTEMPTS,
     _face_detect_rate_lock,
     _face_detect_requests,
+    _face_recognition_provider,
     _pin_login_attempts,
     _pin_login_lock,
     app,
@@ -53,6 +54,27 @@ class FaceSenseAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertTrue(response.is_json)
         self.assertIn("API", response.get_json()["error"])
+
+    def test_stale_azure_settings_do_not_override_local_provider(self):
+        with patch.dict(
+            os.environ,
+            {
+                "FACE_RECOGNITION_PROVIDER": "local",
+                "AZURE_FACE_ENDPOINT": "https://example.cognitiveservices.azure.com",
+                "AZURE_FACE_KEY": "stale-key",
+            },
+        ):
+            self.assertEqual(_face_recognition_provider(), "local")
+
+        with patch.dict(
+            os.environ,
+            {
+                "FACE_RECOGNITION_PROVIDER": "azure",
+                "AZURE_FACE_ENDPOINT": "https://example.cognitiveservices.azure.com",
+                "AZURE_FACE_KEY": "valid-key",
+            },
+        ):
+            self.assertEqual(_face_recognition_provider(), "azure")
 
     def _csrf_token(self):
         response = self.client.get("/")

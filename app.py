@@ -306,6 +306,15 @@ def _local_face_available():
     return cv2 is not None and np is not None
 
 
+def _face_recognition_provider():
+    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
+    if provider == "azure" and _azure_face_configured():
+        return "azure"
+    if provider == "embedding":
+        return "embedding"
+    return "local"
+
+
 def _local_model_dir():
     if os.getenv("WEBSITE_SITE_NAME"):
         model_dir = Path(os.getenv("HOME", r"D:\home")) / "data" / "facesense"
@@ -425,14 +434,11 @@ def index():
     )
     flask_secret_configured = bool(app.secret_key)
     checkin_configured = checkin_password_configured and flask_secret_configured
-    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
+    provider = _face_recognition_provider()
     face_detection_configured = (
         provider == "local"
         and _local_face_available()
-    ) or bool(
-        os.getenv("FACE_DETECT_API_KEY", "").strip()
-        or _azure_face_configured()
-    )
+    ) or (provider == "azure" and _azure_face_configured())
     face_detection_enabled = True
     admin_authenticated = bool(
         checkin_configured and session.get("checkin_admin_authenticated")
@@ -756,7 +762,11 @@ def delete_person(person_id):
 
     azure_warning = None
     azure_person_id = person["azure_person_id"]
-    if azure_person_id and _azure_face_configured():
+    if (
+        azure_person_id
+        and _face_recognition_provider() == "azure"
+        and _azure_face_configured()
+    ):
         try:
             azure_response = _azure_request(
                 "DELETE",
@@ -1441,8 +1451,8 @@ def enroll_face():
     ):
         return jsonify(error="圖片格式只支援 JPEG 或 PNG。"), 400
 
-    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
-    if provider == "local" and not _azure_face_configured():
+    provider = _face_recognition_provider()
+    if provider == "local":
         if not _local_face_available():
             return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
         face, face_error = _extract_local_face(image_bytes)
@@ -1478,7 +1488,7 @@ def enroll_face():
             provider="local-lbph",
         )
 
-    if _azure_face_configured():
+    if provider == "azure":
         try:
             with closing(_connect_db()) as connection:
                 person = connection.execute(
@@ -1548,8 +1558,8 @@ def enroll_face():
 def auto_enroll_faces():
     if not _csrf_is_valid():
         return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
-    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
-    if provider == "local" and not _azure_face_configured():
+    provider = _face_recognition_provider()
+    if provider == "local":
         if not _local_face_available():
             return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
         try:
@@ -1580,7 +1590,7 @@ def auto_enroll_faces():
         except sqlite3.Error:
             app.logger.exception("Could not auto-train local LBPH face model")
             return jsonify(error="本機人臉模型訓練失敗。"), 500
-    if _azure_face_configured():
+    if provider == "azure":
         try:
             with closing(_connect_db()) as connection:
                 photo_column = _find_photo_blob_column(connection)
@@ -1722,8 +1732,8 @@ def recognize_face():
     ):
         return jsonify(error="圖片格式錯誤或大小不可超過 5 MB。"), 400
 
-    provider = os.getenv("FACE_RECOGNITION_PROVIDER", "local").strip().lower()
-    if provider == "local" and not _azure_face_configured():
+    provider = _face_recognition_provider()
+    if provider == "local":
         if not _local_face_available():
             return jsonify(error="本機人臉辨識元件尚未安裝。請安裝 opencv-contrib-python。"), 503
         face, face_error = _extract_local_face(image_bytes)
@@ -1776,7 +1786,7 @@ def recognize_face():
             app.logger.exception("Could not use local LBPH face model")
             return jsonify(error="本機人臉辨識模型無法讀取或執行。"), 500
 
-    if _azure_face_configured():
+    if provider == "azure":
         try:
             candidate = _azure_identify(image_bytes)
             if candidate is None:

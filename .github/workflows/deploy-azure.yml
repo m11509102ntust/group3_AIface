@@ -102,11 +102,13 @@ jobs:
       - name: Configure staging slot secrets
         shell: pwsh
         env:
+          CHECKIN_ADMIN_PASSWORD: ${{ secrets.CHECKIN_ADMIN_PASSWORD }}
           FLASK_SECRET_KEY: ${{ secrets.FLASK_SECRET_KEY }}
           FACE_DETECT_API_KEY: ${{ secrets.FACE_DETECT_API_KEY }}
-          AZURE_FACE_ENDPOINT: ${{ secrets.AZURE_FACE_ENDPOINT }}
-          AZURE_FACE_KEY: ${{ secrets.AZURE_FACE_KEY }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:CHECKIN_ADMIN_PASSWORD)) {
+            throw 'CHECKIN_ADMIN_PASSWORD repository secret is not configured'
+          }
           if ([string]::IsNullOrWhiteSpace($env:FLASK_SECRET_KEY)) {
             throw 'FLASK_SECRET_KEY repository secret is not configured'
           }
@@ -118,22 +120,19 @@ jobs:
             --name $env:AZURE_WEBAPP_NAME `
             --slot $env:AZURE_STAGING_SLOT `
             --settings `
+              "CHECKIN_ADMIN_PASSWORD=$env:CHECKIN_ADMIN_PASSWORD" `
               "FLASK_SECRET_KEY=$env:FLASK_SECRET_KEY" `
               "FACE_DETECT_API_KEY=$env:FACE_DETECT_API_KEY" `
+              "FACE_RECOGNITION_PROVIDER=local" `
             --output none
           if ($LASTEXITCODE -ne 0) { throw 'Application secret configuration failed' }
-          if (-not [string]::IsNullOrWhiteSpace($env:AZURE_FACE_ENDPOINT) -and
-              -not [string]::IsNullOrWhiteSpace($env:AZURE_FACE_KEY)) {
-            az webapp config appsettings set `
-              --resource-group $env:AZURE_RESOURCE_GROUP `
-              --name $env:AZURE_WEBAPP_NAME `
-              --slot $env:AZURE_STAGING_SLOT `
-              --settings `
-                "AZURE_FACE_ENDPOINT=$env:AZURE_FACE_ENDPOINT" `
-                "AZURE_FACE_KEY=$env:AZURE_FACE_KEY" `
-              --output none
-            if ($LASTEXITCODE -ne 0) { throw 'Azure Face application secret configuration failed' }
-          }
+          az webapp config appsettings delete `
+            --resource-group $env:AZURE_RESOURCE_GROUP `
+            --name $env:AZURE_WEBAPP_NAME `
+            --slot $env:AZURE_STAGING_SLOT `
+            --setting-names AZURE_FACE_ENDPOINT AZURE_FACE_KEY `
+            --output none
+          if ($LASTEXITCODE -ne 0) { throw 'Azure Face stale setting cleanup failed' }
 
       - name: Smoke test staging slot
         shell: pwsh

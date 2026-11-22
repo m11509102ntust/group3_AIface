@@ -90,12 +90,12 @@ python app.py
 
 管理員透過「建立人臉模型」拍照後，照片會存入 SQLite `people.face_image`，伺服器會依目前所有已建檔照片重訓 LBPH 模型並寫入持久目錄：
 
-- 本機：專案 `instance/facesense/lbph-model.yml`
-- Azure：`D:\home\data\facesense\lbph-model.yml`
+- 本機：`instance/facesense/lbph-model.yml`
+- Azure Windows App Service：`D:\home\data\facesense\lbph-model.yml`
 
 辨識時畫面需只有一張清楚正面人臉。LBPH 距離越小越相似，預設門檻為 75，可透過 `LOCAL_FACE_DISTANCE_THRESHOLD`調整；此方案是本機古典人臉辨識，不是 embedding 模型。若需要 embedding 或較高精準度，再改用 InsightFace 或 DeepFace。
 
-部署到 Azure 前，請在 Azure Portal 的 Web App → **Settings → Environment variables** 加入 `FACE_DETECT_API_KEY`，儲存後確認應用程式已重新啟動。任何曾貼到聊天、提交到 Git 或其他不受信任位置的金鑰都應先撤銷，再使用新金鑰。
+部署到 Azure 前，請在 Azure Portal 的 Web App → **Settings → Environment variables** 設定 `CHECKIN_ADMIN_PASSWORD`、`FLASK_SECRET_KEY`、`FACE_RECOGNITION_PROVIDER=local`，並可選擇設定 `CHECKIN_DB_PATH=D:\home\data\checkins.sqlite3`。部署後請刪除任何殘留的 `AZURE_FACE_ENDPOINT` 與 `AZURE_FACE_KEY`。本版本只有在 `FACE_RECOGNITION_PROVIDER=azure` 且兩個 Azure Face 設定都有值時才會使用 Azure Face。曾貼到聊天、提交到 Git 或其他不受信任位置的金鑰應先撤銷。
 
 ## 部署到 Azure Web App
 
