@@ -2,6 +2,7 @@ const checkinForm = document.getElementById("checkin-form");
 const checkinStatus = document.getElementById("checkin-status");
 const personForm = document.getElementById("person-form");
 const personStatus = document.getElementById("person-status");
+const pendingFaceList = document.getElementById("pending-face-list");
 
 function displayLocalTimes() {
   document.querySelectorAll("[data-utc-time]").forEach((element) => {
@@ -27,75 +28,59 @@ function addCheckinRow(result) {
   time.textContent = result.checkin_time;
   timeCell.append(time);
   displayLocalTimes();
+}
 
-  const pendingFaceList = document.getElementById("pending-face-list");
-  if (pendingFaceList) {
-    pendingFaceList.addEventListener("click", async (event) => {
-      const selectButton = event.target.closest("[data-select-pending-face]");
-      if (selectButton) {
-        const card = selectButton.closest("[data-request-id]");
-        const requestId = card.dataset.requestId;
-        document.getElementById("pending-face-request-id").value = requestId;
-        const preview = document.getElementById("selected-face-preview");
-        const image = document.getElementById("selected-face-image");
-        image.src = card.querySelector("img").src;
-        preview.hidden = false;
-        document.getElementById("selected-face-status").textContent =
-          "已同步待審照片；請填寫姓名與 PIN。";
-        personStatus.textContent = "待審照片已同步到新增人員表單。";
-        document.getElementById("person-name").focus();
-        return;
-      }
+if (pendingFaceList) {
+  pendingFaceList.addEventListener("click", async (event) => {
+    const selectButton = event.target.closest("[data-select-pending-face]");
+    if (selectButton) {
+      const card = selectButton.closest("[data-request-id]");
+      const requestId = card.dataset.requestId;
+      document.getElementById("pending-face-request-id").value = requestId;
+      const preview = document.getElementById("selected-face-preview");
+      const image = document.getElementById("selected-face-image");
+      image.src = card.querySelector("img").src;
+      preview.hidden = false;
+      document.getElementById("selected-face-status").textContent =
+        "已同步待審照片；請填寫姓名與 PIN。";
+      personStatus.textContent = "待審照片已同步到新增人員表單。";
+      document.getElementById("person-name").focus();
+      return;
+    }
 
-      const button = event.target.closest(".reject-face-request");
-      if (!button) {
-        return;
-      }
-      const item = button.closest("li");
-      const requestId = encodeURIComponent(item.dataset.requestId);
-      const approve = button.classList.contains("approve-face-request");
-      const status = document.getElementById("face-request-status");
-      let body = null;
-      if (approve) {
-        const name = item.querySelector(".pending-face-name").value.trim();
-        const pin = item.querySelector(".pending-face-pin").value;
-        if (!name || !/^[0-9]{6,12}$/.test(pin)) {
-          status.textContent = "核准前請輸入姓名與 6 至 12 位數字 PIN。";
-          return;
-        }
-        body = JSON.stringify({ name, pin });
-      }
-      button.disabled = true;
-      status.textContent = approve ? "正在核准並建立人臉模型…" : "正在拒絕申請…";
-      try {
-        const response = await fetch(
-          `/api/face/enrollment-requests/${requestId}${approve ? "/approve" : ""}`,
-          {
-            method: approve ? "POST" : "DELETE",
-            headers: {
-              "X-CSRF-Token": pendingFaceList.dataset.csrfToken,
-              ...(body ? { "Content-Type": "application/json" } : {}),
-            },
-            body,
+    const button = event.target.closest(".reject-face-request");
+    if (!button) {
+      return;
+    }
+    const item = button.closest("li");
+    const requestId = encodeURIComponent(item.dataset.requestId);
+    const status = document.getElementById("face-request-status");
+    button.disabled = true;
+    status.textContent = "正在拒絕申請…";
+    try {
+      const response = await fetch(
+        `/api/face/enrollment-requests/${requestId}`,
+        {
+          method: "DELETE",
+          headers: {
+            "X-CSRF-Token": pendingFaceList.dataset.csrfToken,
           },
-        );
-        const result = await readJsonResponse(response, "審核操作失敗。");
-        if (!response.ok) {
-          throw new Error(result.error || "審核操作失敗。");
-        }
-        item.remove();
-        status.textContent = approve
-          ? `${result.name} 已核准並建立人臉模型。`
-          : "待審照片已拒絕並刪除。";
-      } catch (error) {
-        button.disabled = false;
-        status.textContent =
-          error instanceof TypeError
-            ? "無法連線至網站，請檢查網路後重試。"
-            : error.message;
+        },
+      );
+      const result = await readJsonResponse(response, "審核操作失敗。");
+      if (!response.ok) {
+        throw new Error(result.error || "審核操作失敗。");
       }
-    });
-  }
+      item.remove();
+      status.textContent = "待審照片已拒絕並刪除。";
+    } catch (error) {
+      button.disabled = false;
+      status.textContent =
+        error instanceof TypeError
+          ? "無法連線至網站，請檢查網路後重試。"
+          : error.message;
+    }
+  });
 }
 
 const batchApproveButton = document.getElementById("batch-approve-face");

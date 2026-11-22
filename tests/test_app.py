@@ -13,6 +13,7 @@ import requests
 
 from app import (
     PIN_LOGIN_MAX_ATTEMPTS,
+    _connect_db,
     _face_detect_rate_lock,
     _face_detect_requests,
     _face_recognition_provider,
@@ -133,6 +134,46 @@ class FaceSenseAppTests(unittest.TestCase):
         self.assertNotIn("1,284", page)
         self.assertNotIn("待確認事件", page)
         self.assertNotIn('aria-label="通知"', page)
+
+    def test_legacy_database_merges_duplicate_people_names(self):
+        database_path = os.environ["CHECKIN_DB_PATH"]
+        with closing(sqlite3.connect(database_path)) as connection:
+            connection.execute(
+                """
+                CREATE TABLE people (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    pin_salt TEXT NOT NULL,
+                    pin_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO people (name, pin_salt, pin_hash, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                ("王小明", "salt-1", "hash-1", "2026-11-22T10:00:00Z"),
+            )
+            connection.execute(
+                "INSERT INTO people (name, pin_salt, pin_hash, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                ("王小明", "salt-2", "hash-2", "2026-11-22T10:01:00Z"),
+            )
+            connection.commit()
+
+        connection = _connect_db()
+        try:
+            rows = connection.execute(
+                "SELECT id, name FROM people WHERE name = '王小明' COLLATE NOCASE"
+            ).fetchall()
+            self.assertEqual(len(rows), 1)
+            duplicate_index = connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type = 'index' AND name = 'ux_people_name_nocase'"
+            ).fetchone()[0]
+            self.assertEqual(duplicate_index, 1)
+        finally:
+            connection.close()
 
     def test_checkin_page_shows_countdown_and_capture_complete_ui(self):
         page = self.client.get("/checkin").get_data(as_text=True)

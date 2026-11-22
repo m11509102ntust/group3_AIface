@@ -114,6 +114,7 @@ def _connect_db():
                 "WHERE face_embedding IS NULL"
             )
             break
+
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS mytable (
@@ -123,6 +124,44 @@ def _connect_db():
             "打卡時間" TEXT NOT NULL
         )
         """
+    )
+    people_rows = connection.execute(
+        "SELECT id, name, pin_salt, pin_hash, face_embedding, "
+        "face_enrolled_at, azure_person_id, face_image FROM people"
+    ).fetchall()
+    duplicate_groups = defaultdict(list)
+    for person in people_rows:
+        duplicate_groups[person["name"].casefold()].append(person)
+    for duplicates in duplicate_groups.values():
+        if len(duplicates) < 2:
+            continue
+        duplicates.sort(key=lambda person: person["id"])
+        keeper = duplicates[0]
+        keep_values = dict(keeper)
+        for duplicate in duplicates[1:]:
+            connection.execute(
+                "UPDATE mytable SET person_id = ? WHERE person_id = ?",
+                (keeper["id"], duplicate["id"]),
+            )
+            for column in (
+                "pin_salt",
+                "pin_hash",
+                "face_embedding",
+                "face_enrolled_at",
+                "azure_person_id",
+                "face_image",
+            ):
+                if not keep_values[column] and duplicate[column]:
+                    keep_values[column] = duplicate[column]
+                    connection.execute(
+                        f"UPDATE people SET {column} = ? WHERE id = ?",
+                        (duplicate[column], keeper["id"]),
+                    )
+            connection.execute("DELETE FROM people WHERE id = ?", (duplicate["id"],))
+
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_people_name_nocase "
+        "ON people(name COLLATE NOCASE)"
     )
     connection.execute(
         """

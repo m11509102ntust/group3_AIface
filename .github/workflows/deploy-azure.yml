@@ -104,16 +104,12 @@ jobs:
         env:
           CHECKIN_ADMIN_PASSWORD: ${{ secrets.CHECKIN_ADMIN_PASSWORD }}
           FLASK_SECRET_KEY: ${{ secrets.FLASK_SECRET_KEY }}
-          FACE_DETECT_API_KEY: ${{ secrets.FACE_DETECT_API_KEY }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:CHECKIN_ADMIN_PASSWORD)) {
             throw 'CHECKIN_ADMIN_PASSWORD repository secret is not configured'
           }
           if ([string]::IsNullOrWhiteSpace($env:FLASK_SECRET_KEY)) {
             throw 'FLASK_SECRET_KEY repository secret is not configured'
-          }
-          if ([string]::IsNullOrWhiteSpace($env:FACE_DETECT_API_KEY)) {
-            throw 'FACE_DETECT_API_KEY repository secret is not configured'
           }
           az webapp config appsettings set `
             --resource-group $env:AZURE_RESOURCE_GROUP `
@@ -122,7 +118,6 @@ jobs:
             --settings `
               "CHECKIN_ADMIN_PASSWORD=$env:CHECKIN_ADMIN_PASSWORD" `
               "FLASK_SECRET_KEY=$env:FLASK_SECRET_KEY" `
-              "FACE_DETECT_API_KEY=$env:FACE_DETECT_API_KEY" `
               "FACE_RECOGNITION_PROVIDER=local" `
             --output none
           if ($LASTEXITCODE -ne 0) { throw 'Application secret configuration failed' }
@@ -130,9 +125,9 @@ jobs:
             --resource-group $env:AZURE_RESOURCE_GROUP `
             --name $env:AZURE_WEBAPP_NAME `
             --slot $env:AZURE_STAGING_SLOT `
-            --setting-names AZURE_FACE_ENDPOINT AZURE_FACE_KEY `
+            --setting-names AZURE_FACE_ENDPOINT AZURE_FACE_KEY FACE_DETECT_API_KEY `
             --output none
-          if ($LASTEXITCODE -ne 0) { throw 'Azure Face stale setting cleanup failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Stale face-recognition setting cleanup failed' }
 
       - name: Smoke test staging slot
         shell: pwsh
