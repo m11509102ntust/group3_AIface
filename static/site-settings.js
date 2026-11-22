@@ -17,7 +17,13 @@ if (faceDetectionToggle) {
         },
         body: JSON.stringify({ enabled }),
       });
-      const result = await response.json();
+      const text = await response.text();
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch {
+        result = { error: "伺服器回傳了無法解析的內容。" };
+      }
       if (!response.ok) {
         throw new Error(result.error || "設定儲存失敗，請稍後重試。");
       }

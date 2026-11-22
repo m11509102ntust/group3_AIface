@@ -48,6 +48,12 @@ class FaceSenseAppTests(unittest.TestCase):
         app.config["TESTING"] = self.original_testing
         self.temp_dir.cleanup()
 
+    def test_missing_api_returns_json(self):
+        response = self.client.get("/api/not-found")
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(response.is_json)
+        self.assertIn("API", response.get_json()["error"])
+
     def _csrf_token(self):
         response = self.client.get("/")
         match = re.search(
@@ -299,6 +305,68 @@ class FaceSenseAppTests(unittest.TestCase):
         response = self._person_login("Alex", "654321")
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.location, "/")
+
+    def test_delete_person_requires_admin_and_csrf(self):
+        response = self.client.delete("/api/people/1")
+        self.assertEqual(response.status_code, 401)
+
+        self.assertEqual(self._login().status_code, 302)
+        response = self.client.delete("/api/people/1")
+        self.assertEqual(response.status_code, 400)
+
+    def test_admin_delete_person_removes_checkins_and_preserves_pending_faces(self):
+        self.assertEqual(self._login().status_code, 302)
+        csrf_token = self._csrf_token()
+        self.assertEqual(
+            self._register_person("王小明", "123456").status_code,
+            201,
+        )
+
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            person_id = connection.execute(
+                "SELECT id FROM people WHERE name = ?", ("王小明",)
+            ).fetchone()[0]
+            connection.execute(
+                'INSERT INTO mytable (person_id, "姓名", "打卡時間") '
+                "VALUES (?, ?, ?)",
+                (person_id, "王小明", "2026-11-22T10:00:00Z"),
+            )
+            connection.execute(
+                "INSERT INTO face_enrollment_requests "
+                "(image, content_type, created_at) VALUES (?, ?, ?)",
+                (sqlite3.Binary(b"pending-image"), "image/jpeg", "2026-11-22T10:00:00Z"),
+            )
+            connection.commit()
+
+        response = self.client.delete(
+            f"/api/people/{person_id}",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()
+        self.assertTrue(result["deleted"])
+        self.assertEqual(result["deleted_checkins"], 1)
+
+        with closing(sqlite3.connect(os.environ["CHECKIN_DB_PATH"])) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM people").fetchone()[0], 0)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM mytable").fetchone()[0], 0)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM face_enrollment_requests"
+                ).fetchone()[0],
+                1,
+            )
+
+        page = self.client.get("/registered")
+        self.assertNotIn("王小明", page.get_data(as_text=True))
+
+    def test_delete_person_returns_not_found(self):
+        self.assertEqual(self._login().status_code, 302)
+        response = self.client.delete(
+            "/api/people/999",
+            headers={"X-CSRF-Token": self._csrf_token()},
+        )
+        self.assertEqual(response.status_code, 404)
 
     def test_pin_must_be_six_to_twelve_digits(self):
         self.assertEqual(self._login().status_code, 302)

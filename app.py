@@ -10,6 +10,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import tempfile
 from collections import defaultdict, deque
 from contextlib import closing
 from datetime import datetime, timezone
@@ -309,7 +310,16 @@ def _local_model_dir():
     if os.getenv("WEBSITE_SITE_NAME"):
         model_dir = Path(os.getenv("HOME", r"D:\home")) / "data" / "facesense"
     else:
-        model_dir = Path(app.instance_path) / "facesense"
+        configured_dir = os.getenv("LOCAL_FACE_MODEL_DIR", "").strip()
+        if configured_dir:
+            model_dir = Path(configured_dir)
+        else:
+            local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+            model_dir = (
+                Path(local_app_data) / "FaceSense" / "facesense"
+                if local_app_data
+                else Path(tempfile.gettempdir()) / "FaceSense" / "facesense"
+            )
     model_dir.mkdir(parents=True, exist_ok=True)
     return model_dir
 
@@ -368,16 +378,38 @@ def _train_local_face_model():
         faces.append(face)
         labels.append(label)
     if not faces:
-        return None, "尚未建立可用的人臉模型。"
+        return None, "尚未建立可用的人臉模型，請先由管理員建立至少一位人員的本機人臉資料。"
     recognizer = cv2.face.LBPHFaceRecognizer_create()
     recognizer.train(faces, np.asarray(labels, dtype=np.int32))
     model_dir = _local_model_dir()
-    recognizer.save(str(model_dir / "lbph-model.yml"))
-    (model_dir / "lbph-labels.json").write_text(
+    model_path = model_dir / "lbph-model.yml"
+    labels_path = model_dir / "lbph-labels.json"
+    model_temp = model_dir / "lbph-model.yml.tmp"
+    labels_temp = model_dir / "lbph-labels.json.tmp"
+    recognizer.save(str(model_temp))
+    labels_temp.write_text(
         json.dumps(mapping, ensure_ascii=False),
         encoding="utf-8",
     )
+    model_temp.replace(model_path)
+    labels_temp.replace(labels_path)
     return mapping, None
+
+
+def _load_local_face_model():
+    model_dir = _local_model_dir()
+    model_path = model_dir / "lbph-model.yml"
+    labels_path = model_dir / "lbph-labels.json"
+    if not model_path.is_file() or model_path.stat().st_size == 0:
+        raise FileNotFoundError("LBPH 模型檔案不存在或為空。")
+    if not labels_path.is_file() or labels_path.stat().st_size == 0:
+        raise FileNotFoundError("LBPH 人員映射檔不存在或為空。")
+    mapping = json.loads(labels_path.read_text(encoding="utf-8"))
+    if not isinstance(mapping, dict) or not mapping:
+        raise ValueError("LBPH 人員映射檔格式無效。")
+    recognizer = cv2.face.LBPHFaceRecognizer_create()
+    recognizer.read(str(model_path))
+    return recognizer, mapping
 
 
 @app.get("/")
@@ -673,6 +705,78 @@ def register_person():
         return jsonify(error="人員資料儲存失敗，請稍後再試。"), 500
 
     return jsonify(name=name), result_status
+
+
+@app.delete("/api/people/<int:person_id>")
+@_admin_required
+def delete_person(person_id):
+    if not _csrf_is_valid():
+        return jsonify(error="安全驗證失敗，請重新載入頁面。"), 400
+
+    try:
+        with closing(_connect_db()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            person = connection.execute(
+                "SELECT id, name, azure_person_id FROM people WHERE id = ?",
+                (person_id,),
+            ).fetchone()
+            if person is None:
+                return jsonify(error="找不到指定的人員。"), 404
+
+            checkin_count = connection.execute(
+                "SELECT COUNT(*) FROM mytable WHERE person_id = ?", (person_id,)
+            ).fetchone()[0]
+            connection.execute("DELETE FROM mytable WHERE person_id = ?", (person_id,))
+            connection.execute("DELETE FROM people WHERE id = ?", (person_id,))
+            connection.commit()
+    except sqlite3.Error:
+        app.logger.exception("Could not delete person")
+        return jsonify(error="刪除人員失敗，請稍後再試。"), 500
+
+    if session.get("checkin_person_id") == person_id:
+        session.pop("checkin_person_id", None)
+        session.pop("checkin_pin_hash", None)
+
+    model_warning = None
+    try:
+        mapping, train_error = _train_local_face_model()
+        if train_error:
+            model_dir = _local_model_dir()
+            for model_file in (
+                model_dir / "lbph-model.yml",
+                model_dir / "lbph-model.yml.tmp",
+                model_dir / "lbph-labels.json",
+                model_dir / "lbph-labels.json.tmp",
+            ):
+                if model_file.exists():
+                    model_file.unlink()
+    except (OSError, ValueError, AttributeError, cv2.error):
+        app.logger.exception("Could not rebuild local face model after deleting person")
+        model_warning = "人員已刪除，但本機人臉模型重建失敗；請重新建檔。"
+
+    azure_warning = None
+    azure_person_id = person["azure_person_id"]
+    if azure_person_id and _azure_face_configured():
+        try:
+            azure_response = _azure_request(
+                "DELETE",
+                f"persongroups/{AZURE_FACE_PERSON_GROUP_ID}/persons/{azure_person_id}",
+            )
+            if azure_response.status_code not in (200, 202, 204):
+                raise RuntimeError("Azure Face Person 刪除失敗。")
+            _azure_train_person_group()
+        except (RuntimeError, requests.RequestException):
+            app.logger.exception("Could not delete Azure Face person")
+            azure_warning = "人員已刪除，但雲端人臉資料清除失敗。"
+
+    return jsonify(
+        deleted=True,
+        person_id=person_id,
+        name=person["name"],
+        deleted_checkins=checkin_count,
+        model_warning=model_warning,
+        azure_warning=azure_warning,
+    ), 200
 
 
 @app.post("/api/checkins")
@@ -1625,21 +1729,19 @@ def recognize_face():
         face, face_error = _extract_local_face(image_bytes)
         if face_error:
             return jsonify(error=face_error), 422
-        model_dir = _local_model_dir()
-        model_path = model_dir / "lbph-model.yml"
-        labels_path = model_dir / "lbph-labels.json"
-        if not model_path.exists() or not labels_path.exists():
-            mapping, rebuild_error = _train_local_face_model()
-            if rebuild_error:
-                return jsonify(error=rebuild_error), 404
         try:
             threshold = float(os.getenv("LOCAL_FACE_DISTANCE_THRESHOLD", "75"))
         except ValueError:
             return jsonify(error="LOCAL_FACE_DISTANCE_THRESHOLD 設定無效。"), 500
         try:
-            mapping = json.loads(labels_path.read_text(encoding="utf-8"))
-            recognizer = cv2.face.LBPHFaceRecognizer_create()
-            recognizer.read(str(model_path))
+            try:
+                recognizer, mapping = _load_local_face_model()
+            except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError, cv2.error):
+                app.logger.warning("Could not load local LBPH face model; rebuilding")
+                mapping, rebuild_error = _train_local_face_model()
+                if rebuild_error:
+                    return jsonify(error=rebuild_error), 404
+                recognizer, mapping = _load_local_face_model()
             label, distance = recognizer.predict(face)
             person_info = mapping.get(str(label))
             if person_info is None or distance > threshold:
@@ -1670,47 +1772,9 @@ def recognize_face():
                 checkin_time=checked_at,
                 provider="local-lbph",
             ), 201
-        except (OSError, ValueError, json.JSONDecodeError):
+        except (OSError, ValueError, json.JSONDecodeError, cv2.error):
             app.logger.exception("Could not use local LBPH face model")
-            mapping, rebuild_error = _train_local_face_model()
-            if rebuild_error:
-                return jsonify(error=rebuild_error), 500
-            try:
-                mapping = json.loads(labels_path.read_text(encoding="utf-8"))
-                recognizer = cv2.face.LBPHFaceRecognizer_create()
-                recognizer.read(str(model_path))
-                label, distance = recognizer.predict(face)
-                threshold = float(os.getenv("LOCAL_FACE_DISTANCE_THRESHOLD", "75"))
-                person_info = mapping.get(str(label))
-                if person_info is None or distance > threshold:
-                    return jsonify(error="找不到相符的人員。", distance=round(float(distance), 4)), 404
-                with closing(_connect_db()) as connection:
-                    person = connection.execute(
-                        "SELECT id, name FROM people WHERE id = ?",
-                        (person_info["id"],),
-                    ).fetchone()
-                    if person is None:
-                        return jsonify(error="辨識結果不在目前人員名冊中。"), 404
-                    checked_at = datetime.now(timezone.utc).isoformat(
-                        timespec="seconds"
-                    ).replace("+00:00", "Z")
-                    connection.execute(
-                        'INSERT INTO mytable (person_id, "姓名", "打卡時間") '
-                        "VALUES (?, ?, ?)",
-                        (person["id"], person["name"], checked_at),
-                    )
-                    connection.commit()
-                return jsonify(
-                    person_id=person["id"],
-                    name=person["name"],
-                    distance=round(float(distance), 4),
-                    checkin_time=checked_at,
-                    provider="local-lbph",
-                    rebuilt=True,
-                ), 201
-            except (OSError, ValueError, json.JSONDecodeError, cv2.error):
-                app.logger.exception("Could not recover local LBPH face model")
-                return jsonify(error="本機人臉辨識模型無法讀取或執行。"), 500
+            return jsonify(error="本機人臉辨識模型無法讀取或執行。"), 500
 
     if _azure_face_configured():
         try:
@@ -1807,6 +1871,21 @@ def recognize_face():
 @app.errorhandler(413)
 def request_too_large(_):
     return jsonify(error="請求大小超過限制。"), 413
+
+
+@app.errorhandler(404)
+def not_found(error):
+    if request.path.startswith("/api/"):
+        return jsonify(error="找不到指定的 API 或資源。"), 404
+    return error
+
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    if request.path.startswith("/api/"):
+        app.logger.exception("Unhandled API server error")
+        return jsonify(error="伺服器處理資料時發生錯誤，請稍後再試。"), 500
+    return error
 
 
 @app.get("/healthz")

@@ -79,7 +79,7 @@ function addCheckinRow(result) {
             body,
           },
         );
-        const result = await response.json();
+        const result = await readJsonResponse(response, "審核操作失敗。");
         if (!response.ok) {
           throw new Error(result.error || "審核操作失敗。");
         }
@@ -132,7 +132,7 @@ if (batchApproveButton && pendingFaceList) {
           body: JSON.stringify({ entries }),
         },
       );
-      const result = await response.json();
+      const result = await readJsonResponse(response, "批次核准失敗。");
       if (!response.ok) {
         throw new Error(result.error || "批次核准失敗。");
       }
@@ -172,6 +172,15 @@ async function createCheckin(csrfToken) {
   });
 }
 
+async function readJsonResponse(response, fallbackMessage) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: fallbackMessage };
+  }
+}
+
 if (checkinForm) {
   checkinForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -181,7 +190,7 @@ if (checkinForm) {
 
     try {
       const response = await createCheckin(checkinForm.dataset.csrfToken);
-      const result = await response.json();
+      const result = await readJsonResponse(response, "打卡失敗，請稍後重試。");
       if (!response.ok) {
         throw new Error(result.error || "打卡失敗，請稍後重試。");
       }
@@ -205,7 +214,7 @@ if (personForm) {
       headers: { "X-CSRF-Token": personForm.dataset.csrfToken },
     })
       .then(async (response) => {
-        const result = await response.json();
+        const result = await readJsonResponse(response, "照片自動建模失敗。");
         if (response.status === 409) {
           return;
         }
@@ -250,7 +259,7 @@ if (personForm) {
             body: JSON.stringify({ name, pin }),
           },
         );
-        const result = await response.json();
+        const result = await readJsonResponse(response, "待審人臉建檔失敗。");
         if (!response.ok) {
           throw new Error(result.error || "待審人臉建檔失敗。");
         }
@@ -281,7 +290,7 @@ if (personForm) {
         });
 
       let response = await submitPerson(false, false);
-      let result = await response.json();
+      let result = await readJsonResponse(response, "人員資料儲存失敗。");
       if (
         response.status === 409 &&
         (result.needs_confirmation || result.needs_reset_confirmation)
@@ -294,7 +303,7 @@ if (personForm) {
           result.needs_confirmation === true,
           result.needs_reset_confirmation === true,
         );
-        result = await response.json();
+        result = await readJsonResponse(response, "人員資料儲存失敗。");
       }
       if (!response.ok) {
         throw new Error(result.error || "人員資料儲存失敗，請稍後重試。");
@@ -338,6 +347,53 @@ if (personForm) {
     } finally {
       submitButton.disabled = false;
       pinInput.value = "";
+    }
+  });
+}
+
+const registeredPeople = document.getElementById("registered-people");
+if (registeredPeople) {
+  registeredPeople.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-delete-person-id]");
+    if (!button) return;
+
+    const personName = button.dataset.personName || "此人員";
+    if (!window.confirm(`確定要刪除「${personName}」及其所有打卡紀錄嗎？`)) {
+      return;
+    }
+
+    button.disabled = true;
+    const status = document.getElementById("registered-status");
+    try {
+      const response = await fetch(`/api/people/${button.dataset.deletePersonId}`, {
+        method: "DELETE",
+        headers: { "X-CSRF-Token": registeredPeople.dataset.csrfToken || "" },
+      });
+      const result = await readJsonResponse(response, "刪除人員失敗。");
+      if (!response.ok) throw new Error(result.error || "刪除人員失敗。");
+
+      button.closest("li")?.remove();
+      const memberList = document.getElementById("member-list");
+      if (memberList && memberList.children.length === 0) {
+        memberList.hidden = true;
+        if (!document.getElementById("member-empty")) {
+          const empty = document.createElement("p");
+          empty.id = "member-empty";
+          empty.className = "empty-state";
+          empty.textContent = "尚無人員資料。";
+          registeredPeople.append(empty);
+        }
+      }
+      const count = document.querySelector(".member-count");
+      if (count) count.textContent = `${memberList?.children.length || 0} 人`;
+      if (status) {
+        status.textContent =
+          result.model_warning || result.azure_warning ||
+          `已刪除 ${result.name}，並一併刪除 ${result.deleted_checkins} 筆打卡紀錄。`;
+      }
+    } catch (error) {
+      button.disabled = false;
+      if (status) status.textContent = error.message;
     }
   });
 }

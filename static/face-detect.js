@@ -10,6 +10,15 @@ const detectionResult = document.getElementById("detection-result");
 let cameraStream = null;
 let fallbackEnrollmentImageBase64 = null;
 
+async function readJsonResponse(response, fallbackMessage) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: fallbackMessage };
+  }
+}
+
 function setCameraCountdown(text, visible = true) {
   const countdown = document.getElementById("camera-countdown");
   if (!countdown) {
@@ -57,7 +66,7 @@ async function countdownCapture(seconds = 5) {
       },
       body: JSON.stringify({ image_base64: fallbackEnrollmentImageBase64 }),
     });
-    const result = await response.json();
+    const result = await readJsonResponse(response, "待審照片提交失敗。");
     if (!response.ok) {
       throw new Error(result.error || "待審照片提交失敗。");
     }
@@ -164,7 +173,7 @@ detectButton.addEventListener("click", async () => {
       headers,
       body: JSON.stringify(body),
     });
-    const result = await response.json();
+    const result = await readJsonResponse(response, "人臉辨識服務回傳了無法解析的內容。");
     if (
       !response.ok &&
       mode === "recognize" &&

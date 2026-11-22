@@ -51,6 +51,8 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 .registered-people-grid img,
 .registered-person-placeholder { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; }
 .registered-person-placeholder { display: grid; place-items: center; background: #dfeeed; color: #1f8f82; font-size: 32px; font-weight: 800; }
+.delete-person-button { width: 100%; border: 1px solid #d9aaa3; border-radius: 6px; padding: 7px 9px; background: #fff5f2; color: #a7463d; cursor: pointer; font-size: 12px; }
+.delete-person-button:disabled { cursor: wait; opacity: .65; }
 .batch-face-check { display: flex; gap: 6px; align-items: center; padding: 8px; }
 .batch-face-name,
 .batch-face-pin { width: calc(100% - 16px); margin: 4px 8px 8px; padding: 8px; border: 1px solid #dce7e8; border-radius: 6px; }
