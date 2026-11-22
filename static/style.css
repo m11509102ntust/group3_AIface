@@ -85,6 +85,8 @@ footer { display: flex; justify-content: space-between; margin-top: 35px; paddin
 .checkin-controls input { flex: 1; }
 .checkin-form input:focus { border-color: #1f8f82; outline: 2px solid #1f8f8225; }
 .checkin-status { min-height: 20px; margin: 12px 0 0; }
+.face-checkin-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; color: #31535a; font-size: 12px; font-weight: 700; }
+.face-checkin-divider::before, .face-checkin-divider::after { content: ""; height: 1px; flex: 1; background: #dce7e8; }
 .notice { padding: 11px 13px; border-radius: 6px; font-size: 12px; line-height: 1.7; }
 .error-notice { background: #fff1ee; color: #a7463d; }
 .member-count { color: #789097; font-size: 11px; }
