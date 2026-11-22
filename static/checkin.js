@@ -52,9 +52,13 @@ if (pendingFaceList) {
     if (!button) {
       return;
     }
-    const item = button.closest("li");
-    const requestId = encodeURIComponent(item.dataset.requestId);
     const status = document.getElementById("face-request-status");
+    const item = button.closest("[data-request-id]");
+    if (!item) {
+      status.textContent = "找不到要拒絕的人臉申請。";
+      return;
+    }
+    const requestId = encodeURIComponent(item.dataset.requestId);
     button.disabled = true;
     status.textContent = "正在拒絕申請…";
     try {

@@ -186,6 +186,11 @@ class FaceSenseAppTests(unittest.TestCase):
         self.assertIn("response.status !== 429", js)
         self.assertIn("await countdownCapture(5)", js)
 
+    def test_reject_pending_face_js_uses_request_card(self):
+        js = Path("static/checkin.js").read_text(encoding="utf-8")
+        self.assertIn('button.closest("[data-request-id]")', js)
+        self.assertIn('method: "DELETE"', js)
+
     def test_dashboard_metrics_use_real_attendance_and_are_private(self):
         self.assertEqual(self._login().status_code, 302)
         self.assertEqual(self._register_person("王小明", "123456").status_code, 201)
